@@ -25,14 +25,14 @@ test('missing an orb has no penalty and phase does not restrict collection', () 
   assert.equal(game.state.stats.orbs, 1);
 });
 
-test('seeded bonus paths are deterministic and separated from hazards', () => {
+test('seeded bonus paths are deterministic and clear hazard tops', () => {
   const a = createGame({ seed: 71 });
   const b = createGame({ seed: 71 });
   assert.deepEqual(a.state.collectibles, b.state.collectibles);
   assert.ok(a.state.collectibles.length > 0);
   for (const orb of a.state.collectibles) {
-    assert.ok(a.state.obstacles.every(o => Math.abs(o.x - orb.x) > 90));
-    assert.ok(a.state.terrain.every(t => orb.x > t.x + t.width + 40 || orb.x < t.x - 40));
+    assert.ok(a.state.obstacles.every(o => Math.abs(o.x - orb.x) > o.width + orb.radius || orb.y + orb.radius < a.config.groundY - o.height));
+    assert.ok(a.state.terrain.every(t => orb.x > t.x + t.width + orb.radius || orb.x < t.x - orb.radius || orb.y + orb.radius < a.config.groundY - t.height));
   }
 });
 

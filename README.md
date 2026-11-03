@@ -2,7 +2,7 @@
 
 [Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
-A full-screen neon runner with a finite Challenge mode and an Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid gold spikes in either phase. Each circuit is seeded and increases in speed; collect optional signal orbs, chase your best distance, and unlock achievements. Retry the same circuit to learn its patterns, or choose a new random circuit after a run.
+A full-screen neon runner with a finite Challenge mode and an Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid gold spikes in either phase. Each seeded circuit builds obstacle phrases around the soundtrack’s beat and increases in speed; collect optional signal orbs, chase your best distance, and unlock achievements. Retry the same circuit to learn its patterns, or choose a new random circuit after a run.
 
 Use Space, Up, or W to jump; hold to jump again on landing; X or Shift switches phase. On touch screens, use the on-screen jump and phase controls. P or Escape pauses. Sound is optional, and supported devices provide optional short haptic feedback, controlled separately from sound. Records and achievements are saved locally in your browser.
 

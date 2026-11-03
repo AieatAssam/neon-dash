@@ -1,3 +1,5 @@
+import { BEAT_SECONDS } from './rhythm';
+
 /**
  * Deterministic, fixed-step runner simulation.
  * Coordinates are in world units; positive y points down.
@@ -34,6 +36,7 @@ export interface GameState {
 export interface Input { jump?: boolean; togglePhase?: boolean }
 export interface Game {
   config: GameConfig; endless: boolean; generated: boolean; randomState: number; nextCluster: number;
+  nextBeat: number; phraseStart: number; phrasePattern: readonly number[]; phraseIndex: number;
   accumulator: number; pendingInput: Required<Input>; state: GameState;
 }
 
@@ -73,26 +76,56 @@ function random(game: Game): number {
   return ((n ^ n >>> 14) >>> 0) / 4294967296;
 }
 
+/** Integrate the same capped ramp used by the runner, keeping musical timing
+ * stable as the world speeds up. Fixed-step integration differs by < one pixel. */
+function courseDistance(config: GameConfig, time: number): number {
+  const capTime = Math.max(0, (config.maxSpeed - config.speed) / 1.2);
+  const rampTime = Math.min(time, capTime);
+  return Math.min(config.speed, config.maxSpeed) * rampTime + .6 * rampTime * rampTime +
+    Math.max(0, time - capTime) * config.maxSpeed;
+}
+
+const PHRASE_PATTERNS: readonly (readonly number[])[] = [
+  [0, 4], [0, 2, 4, 6], [0, 3, 6], [0, 2, 6],
+];
+
 function extendCourse(game: Game): void {
   const s = game.state;
-  while (game.nextCluster < Math.min(s.distance + 2400, game.config.finishX - 400)) {
-    const tier = Math.min(6, 2 + Math.floor(s.time / 15));
+  const c = game.config;
+  while (game.nextCluster < Math.min(s.distance + 2400, c.finishX - 400)) {
+    const scheduledTime = game.nextBeat * BEAT_SECONDS;
+    const tier = Math.min(6, 2 + Math.floor(scheduledTime / 15));
     const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
     const height = 34 + Math.floor(random(game) * 4) * 4;
-    const gate = tier >= 3 && random(game) < .28;
-    const terrain = tier >= 3 && random(game) < .3;
+    // Sparse phrases leave four beats on either side of a gate. A gate
+    // requests a single phase change without a competing jump requirement.
+    const gate = tier >= 3 && game.phrasePattern.length === 2 && game.phraseIndex === 1 && random(game) < .65;
+    const terrain = !gate && tier >= 3 && random(game) < .3;
     if (terrain) {
       const gap = random(game) < .5;
-      s.terrain.push({ kind: gap ? 'gap' : 'platform', x: game.nextCluster, width: gap ? 90 : 110, height: gap ? 0 : 28 });
+      s.terrain.push({ kind: gap ? 'gap' : 'platform', x: game.nextCluster, width: gap ? 90 : 80, height: gap ? 0 : 28 });
     }
     else if (gate) s.obstacles.push({ x: game.nextCluster, width: 22, height: 180, phase: random(game) < .5 ? 0 : 1, kind: 'gate' });
     else recipe.forEach((phase, i) => s.obstacles.push({
       x: game.nextCluster + i * 28, width: 26, height, phase,
     }));
-    // Bonus jumps sit in the clear runway after every cluster. They do not
-    // consume RNG, so adding rewards preserves the seeded hazard sequence.
-    s.collectibles.push({ x: game.nextCluster + 190, y: game.config.groundY - 70, radius: 10 });
-    game.nextCluster += 360 + Math.floor(random(game) * 100);
+    // Orbs follow the required jump near its apex. Gate rewards stay on the
+    // ground, so collecting never asks for an additional off-beat jump.
+    const orbTime = scheduledTime + .16;
+    s.collectibles.push({
+      x: c.runnerX + courseDistance(c, orbTime) + c.runnerWidth / 2,
+      y: c.groundY - (gate ? c.runnerHeight / 2 : 110), radius: 10,
+    });
+    game.phraseIndex++;
+    if (game.phraseIndex >= game.phrasePattern.length) {
+      game.phraseStart += 8;
+      game.phraseIndex = 0;
+      // The opening stays sparse. Later eight-beat phrases vary in density
+      // while their boundary and all arrivals remain on the same beat grid.
+      game.phrasePattern = PHRASE_PATTERNS[Math.floor(random(game) * (game.phraseStart < 16 ? 1 : PHRASE_PATTERNS.length))];
+    }
+    game.nextBeat = game.phraseStart + game.phrasePattern[game.phraseIndex];
+    game.nextCluster = c.runnerX + courseDistance(c, game.nextBeat * BEAT_SECONDS);
   }
   // Keep the live obstacle array stable. This runs on every fixed simulation
   // step, so Array#filter would otherwise allocate a fresh array 120 times a
@@ -144,7 +177,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     endless: !customLayout && config.mode !== 'challenge',
     generated: !customLayout,
     randomState: Number(config.seed) >>> 0,
-    nextCluster: 560,
+    nextCluster: config.runnerX + courseDistance(config, 6 * BEAT_SECONDS),
+    nextBeat: 6, phraseStart: 6, phrasePattern: PHRASE_PATTERNS[0], phraseIndex: 0,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     state: {
