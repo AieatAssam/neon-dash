@@ -1,4 +1,6 @@
-# Neon runner
+# Neon Dash
+
+[Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
 A neon, phase-switching precision runner for the browser. Jump over spikes and switch phase to pass matching gates. Reach the end of the circuit.
 
