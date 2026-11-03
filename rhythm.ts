@@ -22,3 +22,16 @@ export class BeatClock {
     return simulationTime + this.offset;
   }
 }
+
+/** Simulation is the musical transport, including when sound is muted. */
+export function musicPosition(simulationTime: number, duration: number): number {
+  const time = Math.max(0, simulationTime);
+  return Number.isFinite(duration) && duration > 0 ? time % duration : time;
+}
+
+/** Ignore ordinary media clock jitter, including either side of a loop edge. */
+export function musicNeedsSync(audioTime: number, simulationTime: number, duration: number): boolean {
+  let drift = Math.abs(audioTime - musicPosition(simulationTime, duration));
+  if (Number.isFinite(duration) && duration > 0) drift = Math.min(drift, Math.abs(duration - drift));
+  return drift > .12;
+}

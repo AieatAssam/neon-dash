@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
+import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
-import { BeatClock, beatEnvelope } from './rhythm';
+import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
 
 const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
@@ -61,6 +62,7 @@ const beatClock = new BeatClock();
 const soundEffects = {
  jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url).href),
  phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
+ orb: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
  death: new Audio(new URL('./assets/sfx/alarm.ogg', import.meta.url).href),
  win: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
 };
@@ -91,10 +93,21 @@ function showObjective(newUnlocks = []) {
 }
 showObjective();
 
-function playMusic() { if (audioEnabled && mode === 'running') music.play().catch(() => {}); }
+function syncMusic(force = false) {
+ if (!audioEnabled || mode !== 'running' || music.readyState === 0 || music.seeking) return;
+ if (force || musicNeedsSync(music.currentTime, game.state.time, music.duration)) {
+  try { music.currentTime = musicPosition(game.state.time, music.duration); } catch {}
+ }
+}
+function playMusic() {
+ if (audioEnabled && mode === 'running') {
+  syncMusic(true);
+  music.play().then(() => syncMusic()).catch(() => {});
+ }
+}
 function playSfx(name) {
  visualEvent = { name, at: performance.now() };
- haptic(name === 'death' ? [35, 35, 65] : name === 'win' ? [25, 45, 25, 45, 70] : name === 'phase' ? 15 : 8);
+ haptic(name === 'death' ? [35, 35, 65] : name === 'win' ? [25, 45, 25, 45, 70] : name === 'orb' ? 18 : name === 'phase' ? 15 : 8);
  if (!audioEnabled) return;
  const sound = soundEffects[name];
  sound.currentTime = 0;
@@ -131,7 +144,7 @@ function finish() {
  music.pause();
  $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
- $('overlayKicker').textContent = mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : `ATTEMPT ${String(attempt).padStart(2, '0')} · ${distance}m · LEVEL ${game.state.level || 1}`;
+ $('overlayKicker').textContent = mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
  $('overlayDescription').innerHTML = mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
  $('playLabel').textContent = 'RETRY SAME CIRCUIT';
@@ -357,7 +370,8 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs){visualEvent={name:'orb',at:performance.now()};haptic(18);}if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }
 
