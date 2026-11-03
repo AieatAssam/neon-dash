@@ -20,6 +20,11 @@ let lastTime = 0;
 let rotation = 0;
 let audioEnabled = false;
 let visualEvent = { name: '', at: -10000 };
+let renderedMeters = -1;
+let renderedLevel = -1;
+let renderedPhase = -1;
+let renderedProgress = -1;
+let viewportMetrics = { width: 680, height: 480, dpr: 1 };
 const CYAN = '#37ffe7';
 const VIOLET = '#c778ff';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -131,16 +136,16 @@ window.addEventListener('blur', () => { jumpHeld = false; if (mode === 'running'
 document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'running') pause(); });
 
 function render(time) {
- const rect = canvas.getBoundingClientRect();
- const scale = Math.min(rect.width / 680, rect.height / 480);
- const width = rect.width / scale;
- const height = rect.height / scale;
+ const { width, height } = viewportMetrics;
  const worldOffsetY = Math.max(0, height * .72 - game.config.groundY);
  ctx.setTransform(surface.width/width,0,0,surface.height/height,0,0);
  const s = game.state;
  const c = game.config;
  const color = s.phase === 0 ? CYAN : VIOLET;
- document.documentElement.style.setProperty('--phase', color);
+ if (renderedPhase !== s.phase) {
+  document.documentElement.style.setProperty('--phase', color);
+  renderedPhase = s.phase;
+ }
  const clock = reducedMotion ? 0 : time * .001;
  const pulse = reducedMotion ? 1 : .88 + Math.sin(clock * 3) * .12;
  const palettes = [
@@ -184,7 +189,10 @@ function render(time) {
  // Cut holes in the runway so gaps remain legible against the background.
  ctx.save(); ctx.beginPath();
  let floorStart = 0;
- for (const gap of s.terrain.filter((item: any) => item.kind === 'gap').sort((a: any, b: any) => a.x - b.x)) {
+ // Terrain is appended in world order by the simulation. Avoid allocating and
+ // sorting a filtered copy on every animation frame.
+ for (const gap of s.terrain) {
+  if (gap.kind !== 'gap') continue;
   const left = Math.max(0, Math.min(width, gap.x - s.distance));
   const right = Math.max(0, Math.min(width, gap.x + gap.width - s.distance));
   if (right <= floorStart || left >= width) continue;
@@ -266,14 +274,28 @@ function render(time) {
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
  ctx.restore();
- const level=s.level || 1;const levelProgress=(s.time % 20)/20*100;$('progressFill').style.width=`${levelProgress}%`;$('progressText').textContent=`${meters()}m`;
- $('progressText').setAttribute('aria-label',`${meters()} meters. Level ${level}`);
- $('levelText').textContent=`LEVEL ${String(level).padStart(2,'0')}`;
+ const level=s.level || 1;const levelProgress=(s.time % 20)/20*100;
+ if (Math.floor(levelProgress) !== renderedProgress) {
+  renderedProgress = Math.floor(levelProgress);
+  $('progressFill').style.width=`${renderedProgress}%`;
+ }
+ const currentMeters = meters();
+ if (currentMeters !== renderedMeters || level !== renderedLevel) {
+  renderedMeters = currentMeters; renderedLevel = level;
+  $('progressText').textContent=`${currentMeters}m`;
+  $('progressText').setAttribute('aria-label',`${currentMeters} meters. Level ${level}`);
+  $('levelText').textContent=`LEVEL ${String(level).padStart(2,'0')}`;
+ }
  const phaseName=s.phase===0?'CYAN':'VIOLET';
- if(phaseButton.dataset.phase!==phaseName){phaseButton.dataset.phase=phaseName;phaseButton.innerHTML=`<span>◈</span> ${phaseName} <kbd>X</kbd>`;}phaseButton.style.color=color;phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Keyboard X or Shift.`);
+ if (phaseButton.dataset.phase !== phaseName) {
+  phaseButton.dataset.phase=phaseName;
+  phaseButton.innerHTML=`<span>◈</span> ${phaseName} <kbd>X</kbd>`;
+  phaseButton.style.color=color;
+  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Keyboard X or Shift.`);
+ }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;step(game,{jump:jumpQueued || (jumpHeld && wasGrounded && !game.state.jumpHeld),togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
  render(time);
 }
 
@@ -288,6 +310,8 @@ class RunScene extends Phaser.Scene {
  update(time: number) {
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const scale = Math.min(rect.width / 680, rect.height / 480);
+  viewportMetrics = { width: rect.width / scale, height: rect.height / scale, dpr };
   const width = Math.max(1, Math.round(rect.width * dpr));
   const height = Math.max(1, Math.round(rect.height * dpr));
   if (this.texture.width !== width || this.texture.height !== height) {
@@ -295,7 +319,9 @@ class RunScene extends Phaser.Scene {
    this.picture.setSizeToFrame();
   }
   tick(time);
-  this.picture.setDisplaySize(this.scale.width, this.scale.height);
+  if (this.picture.displayWidth !== this.scale.width || this.picture.displayHeight !== this.scale.height) {
+   this.picture.setDisplaySize(this.scale.width, this.scale.height);
+  }
  }
 }
 

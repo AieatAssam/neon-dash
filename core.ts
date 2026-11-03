@@ -23,6 +23,7 @@ export interface GameState {
   status: 'running' | 'dead' | 'won'; deathReason: 'obstacle' | 'fall' | 'platform' | null;
   jumpHeld: boolean; jumpBuffer: number;
 }
+/** Jump is held; phase switching is an edge-triggered action. */
 export interface Input { jump?: boolean; togglePhase?: boolean }
 export interface Game {
   config: GameConfig; endless: boolean; randomState: number; nextCluster: number;
@@ -148,7 +149,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
   return game;
 }
 
-/** Advance exactly one fixed simulation step. Inputs are edge-triggered for this step. */
+/** Advance exactly one fixed simulation step. Jump remains active while held; phase toggles apply once per step. */
 export function step(game: Game, input: Input = {}): GameState {
   const s = game.state;
   const c = game.config;
@@ -156,7 +157,7 @@ export function step(game: Game, input: Input = {}): GameState {
 
   if (input.togglePhase) { s.phase = s.phase === 0 ? 1 : 0; s.stats.switches++; }
   if (input.jump && !s.jumpHeld) s.jumpBuffer = .1;
-  if (s.jumpBuffer > 0 && s.runner.grounded) {
+  if ((input.jump || s.jumpBuffer > 0) && s.runner.grounded) {
     s.jumpBuffer = 0;
     s.stats.jumps++;
     s.runner.vy = c.jumpVelocity;
@@ -228,7 +229,7 @@ export function advance(game: Game, elapsed: number, input: Input = {}): GameSta
   game.pendingInput.jump ||= Boolean(input.jump);
   game.pendingInput.togglePhase ||= Boolean(input.togglePhase);
   while (game.accumulator + Number.EPSILON >= stepSize && game.state.status === "running") {
-    step(game, game.pendingInput);
+    step(game, { ...game.pendingInput, jump: game.pendingInput.jump || Boolean(input.jump) });
     game.pendingInput = { jump: false, togglePhase: false };
     game.accumulator = Math.max(0, game.accumulator - stepSize);
   }

@@ -6,20 +6,27 @@ test("fixed-step advance matches repeated single steps", () => {
   const a = createGame({ speed: 1000, obstacleStartX: 10000, finishX: 100000 });
   const b = createGame({ speed: 1000, obstacleStartX: 10000, finishX: 100000 });
   advance(a, 1, { jump: true });
-  for (let i = 0; i < 120; i++) step(b, { jump: i === 0 });
+  for (let i = 0; i < 120; i++) step(b, { jump: true });
   assert.deepEqual(a.state, b.state);
 });
 
-test("jump is edge-triggered by grounded state and returns to the floor", () => {
+test("holding jump repeats on landing, releasing lets the runner settle", () => {
   const game = createGame({ speed: 0, obstacleStartX: 10000 });
-  step(game, { jump: true });
-  assert.equal(game.state.runner.grounded, false);
-  assert.ok(game.state.runner.y < game.config.groundY - game.state.runner.height);
-  const firstFrame = game.state.runner.y;
   for (let i = 0; i < 180; i++) step(game, { jump: true });
-  assert.ok(firstFrame < game.config.groundY - game.config.runnerHeight);
+  assert.ok(game.state.stats.jumps >= 3);
+  assert.equal(game.state.runner.grounded, false);
+  for (let i = 0; i < 120; i++) step(game);
   assert.equal(game.state.runner.grounded, true);
   assert.equal(game.state.runner.y, game.config.groundY - game.state.runner.height);
+});
+
+test("held jump behaves identically across render frame sizes", () => {
+  const a = createGame({ speed: 0, obstacleStartX: 10000 });
+  const b = createGame({ speed: 0, obstacleStartX: 10000 });
+  advance(a, 2, { jump: true });
+  for (let i = 0; i < 120; i++) advance(b, 1 / 60, { jump: true });
+  assert.deepEqual(a.state, b.state);
+  assert.ok(a.state.stats.jumps >= 3);
 });
 
 test("phase toggle makes mismatched obstacles harmless and matching obstacles lethal", () => {
