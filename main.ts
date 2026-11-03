@@ -1,10 +1,12 @@
-import { createGame, step } from './core.js';
+import Phaser from 'phaser';
+import { createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 
-const $ = id => document.getElementById(id);
-const canvas = $('game');
-const ctx = canvas.getContext('2d');
-let game = createGame({ seed: Math.floor(Math.random() * 0x100000000) });
+const $ = (id: string): any => document.getElementById(id);
+const canvas = $('game') as HTMLCanvasElement;
+const surface = document.createElement('canvas');
+const ctx = surface.getContext('2d')!;
+let game: any = createGame({ seed: Math.floor(Math.random() * 0x100000000) });
 let mode = 'ready';
 let attempt = 0;
 let progress = { bestDistance: 0, runs: 0, unlocked: [] };
@@ -22,14 +24,14 @@ const CYAN = '#37ffe7';
 const VIOLET = '#c778ff';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 function haptic(pattern) { if (!reducedMotion && typeof navigator.vibrate === 'function') navigator.vibrate(pattern); }
-const music = new Audio(new URL('./assets/space-city.mp3', import.meta.url));
+const music = new Audio(new URL('./assets/space-city.mp3', import.meta.url).href);
 music.loop = true;
 music.volume = .35;
 const soundEffects = {
- jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url)),
- phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url)),
- death: new Audio(new URL('./assets/sfx/alarm.ogg', import.meta.url)),
- win: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url)),
+ jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url).href),
+ phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
+ death: new Audio(new URL('./assets/sfx/alarm.ogg', import.meta.url).href),
+ win: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
 };
 for (const sound of Object.values(soundEffects)) sound.volume = .45;
 const phaseButton = document.createElement('button');
@@ -42,7 +44,7 @@ $('viewport').append(phaseButton);
 const phaseHint = document.createElement('span');
 phaseHint.className = 'phase-help';
 phaseHint.hidden = true;
-phaseHint.textContent = 'X / SHIFT TO SWITCH PHASE';
+phaseHint.textContent = 'X / SHIFT · SWITCH TO THE OPPOSITE COLOR FOR GATES';
 $('viewport').append(phaseHint);
 $('best').innerHTML = `${best}<span>m</span>`;
 function showObjective(newUnlocks = []) {
@@ -130,13 +132,11 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && mod
 
 function render(time) {
  const rect = canvas.getBoundingClientRect();
- const dpr = Math.min(window.devicePixelRatio || 1, 2);
- if (canvas.width !== Math.round(rect.width*dpr) || canvas.height !== Math.round(rect.height*dpr)) { canvas.width = Math.round(rect.width*dpr); canvas.height = Math.round(rect.height*dpr); }
  const scale = Math.min(rect.width / 680, rect.height / 480);
  const width = rect.width / scale;
  const height = rect.height / scale;
  const worldOffsetY = Math.max(0, height * .72 - game.config.groundY);
- ctx.setTransform(canvas.width/width,0,0,canvas.height/height,0,0);
+ ctx.setTransform(surface.width/width,0,0,surface.height/height,0,0);
  const s = game.state;
  const c = game.config;
  const color = s.phase === 0 ? CYAN : VIOLET;
@@ -181,6 +181,17 @@ function render(time) {
  ctx.lineWidth = .7; ctx.strokeStyle = palette.blue + '22';
  for (let x = -(s.distance * .32 % 65); x < width; x += 65) { ctx.beginPath(); ctx.moveTo(x, -worldOffsetY); ctx.lineTo(x, c.groundY); ctx.stroke(); }
  for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+ // Cut holes in the runway so gaps remain legible against the background.
+ ctx.save(); ctx.beginPath();
+ let floorStart = 0;
+ for (const gap of s.terrain.filter((item: any) => item.kind === 'gap').sort((a: any, b: any) => a.x - b.x)) {
+  const left = Math.max(0, Math.min(width, gap.x - s.distance));
+  const right = Math.max(0, Math.min(width, gap.x + gap.width - s.distance));
+  if (right <= floorStart || left >= width) continue;
+  ctx.rect(floorStart, c.groundY - 2, Math.max(0, left - floorStart), height);
+  floorStart = right;
+ }
+ ctx.rect(floorStart, c.groundY - 2, Math.max(0, width - floorStart), height); ctx.clip();
  const floor = ctx.createLinearGradient(0, c.groundY, 0, height);
  floor.addColorStop(0, palette.floor); floor.addColorStop(1, '#040a19');
  ctx.fillStyle = floor; ctx.fillRect(0, c.groundY, width, height);
@@ -192,6 +203,23 @@ function render(time) {
  ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(width, c.groundY + .5); ctx.stroke();
  ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = '#d9fff8'; ctx.stroke();
  ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(width, c.groundY + 7); ctx.stroke(); ctx.restore();
+ ctx.restore();
+ for (const terrain of s.terrain) {
+  const x = terrain.x - s.distance; if (x < -terrain.width || x > width) continue;
+  ctx.save();
+  if (terrain.kind === 'gap') {
+   ctx.fillStyle = '#030713'; ctx.fillRect(x, c.groundY, terrain.width, height);
+   ctx.strokeStyle = palette.pink; ctx.lineWidth = 2; ctx.beginPath();
+   ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY + 12);
+   ctx.moveTo(x + terrain.width, c.groundY); ctx.lineTo(x + terrain.width, c.groundY + 12); ctx.stroke();
+  } else {
+   ctx.fillStyle = '#172941'; ctx.strokeStyle = palette.gold; ctx.lineWidth = 2; ctx.shadowColor = palette.gold; ctx.shadowBlur = 12;
+   ctx.fillRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
+   ctx.strokeRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
+   ctx.shadowBlur = 0; ctx.strokeStyle = '#fff3cb'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
+  }
+  ctx.restore();
+ }
  for (const obstacle of s.obstacles) {
   const x = obstacle.x - s.distance; if (x < -60 || x > width + 60) continue;
   const neutral = obstacle.phase == null;
@@ -201,7 +229,17 @@ function render(time) {
   const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
   fill.addColorStop(0, active ? oc + 'bb' : oc + '16'); fill.addColorStop(1, active ? oc + '18' : oc + '08');
   ctx.fillStyle = fill; ctx.lineWidth = active ? 2.6 : 1.2;
-  ctx.beginPath(); ctx.moveTo(x, c.groundY); ctx.lineTo(x + obstacle.width / 2, c.groundY - obstacle.height); ctx.lineTo(x + obstacle.width, c.groundY); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  if (obstacle.kind === 'gate') {
+   ctx.rect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
+  } else {
+   ctx.moveTo(x, c.groundY); ctx.lineTo(x + obstacle.width / 2, c.groundY - obstacle.height); ctx.lineTo(x + obstacle.width, c.groundY); ctx.closePath();
+  }
+  ctx.fill(); ctx.stroke();
+  if (obstacle.kind === 'gate') {
+   ctx.shadowBlur = 0; ctx.strokeStyle = oc; ctx.lineWidth = 1;
+   for (let y = c.groundY - obstacle.height + 12; y < c.groundY - 5; y += 18) { ctx.beginPath(); ctx.moveTo(x + 4, y); ctx.lineTo(x + obstacle.width - 4, y + 7); ctx.stroke(); }
+  }
   if (active) { ctx.shadowBlur = 0; ctx.strokeStyle = '#f2ffff'; ctx.lineWidth = .8; ctx.stroke(); ctx.fillStyle = '#edffff'; ctx.fillRect(x + obstacle.width / 2 - 1, c.groundY - obstacle.height + 6, 2, 8); }
   ctx.restore();
  }
@@ -236,6 +274,40 @@ function render(time) {
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
  if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;step(game,{jump:jumpQueued || (jumpHeld && wasGrounded && !game.state.jumpHeld),togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
- render(time);requestAnimationFrame(tick);
+ render(time);
 }
-requestAnimationFrame(tick);
+
+class RunScene extends Phaser.Scene {
+ texture!: Phaser.Textures.CanvasTexture;
+ picture!: Phaser.GameObjects.Image;
+ constructor() { super('run'); }
+ create() {
+  this.texture = this.textures.addCanvas('playfield', surface)!;
+  this.picture = this.add.image(0, 0, 'playfield').setOrigin(0);
+ }
+ update(time: number) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+  if (this.texture.width !== width || this.texture.height !== height) {
+   this.texture.setSize(width, height);
+   this.picture.setSizeToFrame();
+  }
+  tick(time);
+  this.picture.setDisplaySize(this.scale.width, this.scale.height);
+ }
+}
+
+new Phaser.Game({
+ // Canvas renders the changing surface directly, avoiding a full-screen GPU
+ // texture allocation and upload on every frame.
+ type: Phaser.CANVAS,
+ canvas,
+ width: canvas.clientWidth || 680,
+ height: canvas.clientHeight || 480,
+ transparent: true,
+ scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
+ scene: RunScene,
+ audio: { noAudio: true },
+});

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advance, createGame, step } from "../core.js";
+import { advance, createGame, step } from "../core.ts";
 
 test("fixed-step advance matches repeated single steps", () => {
   const a = createGame({ speed: 1000, obstacleStartX: 10000, finishX: 100000 });
@@ -83,6 +83,7 @@ test("endless course is seeded and varies between seeds", () => {
 
 test("endless ramp is capped and obstacle memory stays bounded", () => {
   const game = createGame({ seed: 7 });
+  const obstacles = game.state.obstacles;
   for (let i = 0; i < 120 * 240; i++) {
     game.state.runner.y = -10000;
     game.state.runner.vy = 0;
@@ -92,6 +93,7 @@ test("endless ramp is capped and obstacle memory stays bounded", () => {
   assert.equal(game.state.speed, 340);
   assert.ok(game.state.level > 1);
   assert.ok(game.state.obstacles.length < 35);
+  assert.equal(game.state.obstacles, obstacles, "course pruning should retain the live array");
   assert.ok(game.state.stats.cleared > 100);
 });
 
@@ -105,20 +107,101 @@ test("neutral spikes cannot be bypassed with phase", () => {
   }
 });
 
-test("generated recipes are jumpable at every ramp speed with deliberate timing", () => {
+test("generated recipes remain safe with deliberate jumps and gate switches", () => {
   for (const speed of [240, 280, 340]) {
     const game = createGame({ seed: 17 });
     // Freeze ramp at each tested speed while retaining generation.
     game.config.speed = speed;
     game.config.maxSpeed = speed;
+    const terrainKinds = new Set();
     for (let i = 0; i < 120 * 100 && game.state.status === "running"; i++) {
       const s = game.state;
+      for (const terrain of s.terrain) terrainKinds.add(terrain.kind);
       const x = s.distance + s.runner.x;
-      const next = s.obstacles.find(o => o.x + o.width > x - 3);
+      const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];
       const jump = Boolean(next && next.x - x < speed * .19 && s.runner.grounded);
-      step(game, { jump });
+      const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
+      const togglePhase = Boolean(gate && gate.x - x < speed * .6 && gate.phase === s.phase);
+      step(game, { jump, togglePhase });
     }
     assert.equal(game.state.status, "running", `speed ${speed}, distance ${game.state.distance}`);
     assert.ok(game.state.stats.jumps > 30);
+    assert.deepEqual([...terrainKinds].sort(), ['gap', 'platform']);
+    assert.ok(game.state.terrain.length < 15);
   }
+});
+
+test('phase gates require switching and cannot be jumped', () => {
+  for (const jumping of [false, true]) {
+    const game = createGame({ speed: 240, obstacleStartX: 260, finishX: 700 });
+    game.state.obstacles = [{ x: 260, width: 22, height: 180, phase: 0, kind: 'gate' }];
+    for (let i = 0; i < 300 && game.state.status === 'running'; i++) {
+      step(game, { jump: jumping && game.state.runner.grounded });
+    }
+    assert.equal(game.state.status, 'dead');
+  }
+  const game = createGame({ speed: 240, obstacleStartX: 260, finishX: 700 });
+  game.state.obstacles = [{ x: 260, width: 22, height: 180, phase: 0, kind: 'gate' }];
+  step(game, { togglePhase: true });
+  for (let i = 0; i < 400 && game.state.status === 'running'; i++) step(game);
+  assert.equal(game.state.status, 'won');
+});
+
+test('jump pressed shortly before landing is buffered', () => {
+  const game = createGame({ speed: 0, obstacleStartX: 10000 });
+  game.state.runner.y -= 2;
+  game.state.runner.vy = 100;
+  game.state.runner.grounded = false;
+  step(game, { jump: true });
+  for (let i = 0; i < 5; i++) step(game);
+  assert.equal(game.state.runner.grounded, false);
+  assert.equal(game.state.stats.jumps, 1);
+  assert.ok(game.state.runner.vy < 0);
+});
+
+
+test('endless generation introduces isolated phase gates after onboarding', () => {
+  const game = createGame({ seed: 17 });
+  assert.equal(game.state.obstacles.some(o => o.kind === 'gate'), false);
+  let foundGate = false;
+  for (let i = 0; i < 120 * 50; i++) {
+    game.state.runner.y = -10000;
+    game.state.runner.vy = 0;
+    step(game);
+    const gate = game.state.obstacles.find(o => o.kind === 'gate');
+    if (gate) {
+      foundGate = true;
+      assert.ok(game.state.obstacles.every(o => o === gate || Math.abs(o.x - gate.x) >= 278));
+    }
+  }
+  assert.ok(foundGate);
+});
+
+test('gaps remove floor and require a timed jump', () => {
+  for (const jumping of [false, true]) {
+    const game = createGame({ speed: 240, obstacleStartX: 10000, finishX: 700 });
+    game.state.terrain = [{ kind: 'gap', x: 300, width: 90, height: 0 }];
+    for (let i = 0; i < 500 && game.state.status === 'running'; i++) {
+      const x = game.state.distance + game.state.runner.x;
+      step(game, { jump: jumping && x > 255 && x < 260 });
+    }
+    assert.equal(game.state.status, jumping ? 'won' : 'dead');
+    if (!jumping) assert.equal(game.state.deathReason, 'fall');
+  }
+});
+
+test('platforms support landings and punish side impacts', () => {
+  const game = createGame({ speed: 240, obstacleStartX: 10000, finishX: 700 });
+  game.state.terrain = [{ kind: 'platform', x: 300, width: 110, height: 28 }];
+  for (let i = 0; i < 200 && game.state.status === 'running'; i++) step(game);
+  assert.equal(game.state.deathReason, 'platform');
+  const landing = createGame({ speed: 0, obstacleStartX: 10000 });
+  landing.state.terrain = [{ kind: 'platform', x: 90, width: 110, height: 28 }];
+  landing.state.runner.y = 240;
+  landing.state.runner.vy = 100;
+  landing.state.runner.grounded = false;
+  for (let i = 0; i < 30; i++) step(landing);
+  assert.equal(landing.state.status, 'running');
+  assert.equal(landing.state.runner.y, 248);
+  assert.equal(landing.state.runner.grounded, true);
 });
