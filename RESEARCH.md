@@ -1,26 +1,18 @@
-# Geometry Dash gameplay reference
+# Design references
 
-This clone should capture the feel of a rhythm-based action platformer built around simple, one-touch input and precise timing. The player moves through a scrolling obstacle course; a tap triggers a jump, while level sections can change movement through flight and gravity inversion. Colliding with hazards restarts the attempt, so readable obstacle silhouettes and consistent input timing matter. Music supports the rhythm and anticipation, but the challenge is still platforming skill rather than automatic beat matching.
+Neon Dash is an independent arcade runner informed by familiar rhythm-platformer conventions: a continuously advancing course, readable hazards, precise jump timing, and a fast retry loop. Geometry Dash is a reference point for those broad genre ideas, not a source of copied levels, characters, art, or branding. The game uses its own neon palette, obstacle rules, procedural circuits, Challenge and Endless modes, and original interface.
 
-## Design implications
+## Design choices
 
-- Keep the primary control to one button (or its keyboard equivalent), with immediate, predictable response.
-- Use a continuously advancing course and clear hazards that reward anticipation and timing.
-- Make failure and restart quick, preserving the retry loop.
-- Use music and visual cues to reinforce obstacle timing; keep collisions and movement rules consistent.
-- Treat alternate movement modes such as flight and gravity changes as variations on the same simple input.
+- **Simple input, varied timing.** Jump uses one held/repeated action; phase switching adds a second deliberate action for opposite-color gates.
+- **Readable hazards.** The playfield stays visually dominant, with crisp silhouettes and a limited palette. Pink hazards remain dangerous in either phase.
+- **Learnable generated courses.** A run uses a seed, so retrying can teach its obstacle phrases; a fresh circuit changes the sequence. Recovery space and a capped difficulty ramp help keep generated sequences playable.
+- **Music supports anticipation.** Obstacle phrases are built around musical timing, but player timing and collision rules decide the run.
+- **Quick, local replay.** Challenge offers a finish goal; Endless offers distance and local records. Progress is stored in the browser without an account or server.
 
-## Sources
+## References
 
-- [Geometry Dash on Steam](https://store.steampowered.com/app/322170/Geometry_Dash/) — official store description identifies the game as a rhythm-based action platformer and highlights jumping, flying, flipping, one-touch play, practice mode, and changing gravity.
-- [Official Geometry Dash Wiki](https://geometrydash.wiki.gg/) — overview describes the runner-style format, one-touch controls, obstacles, movement-changing transporters, and behavior-changing portals.
-
-## Full-screen visual direction
-
-A [Geometry Dash gameplay screenshot](https://steamcommunity.com/sharedfiles/filedetails/?id=560050823) shows the level filling the screen, a small top progress bar, high-contrast spike silhouettes, and a cube that remains clear against a saturated geometric background. The [Steam screenshot gallery](https://steamcommunity.com/app/322170/screenshots/) offers further examples. Our interpretation is to keep the playfield dominant, make hazards more legible than decoration, and reserve interface overlays for state changes.
-
-For the neon treatment, a bright core with a colored halo reads more clearly than a broad glow alone; glow does not replace contrast ([neon glow reference](https://vocab.design/neon-glow)). Use restrained pulses, layered grid motion and crisp outlines, with reduced motion support and a limited palette to keep hazards readable on small screens.
-
-## Endless runner and replayability
-
-Endless runners combine escalating survival with short-term goals and longer-term records. Temple Run queues objectives ([developer FAQ](https://templerun.zendesk.com/hc/en-us/articles/4414248608531-Frequently-Asked-Questions-FAQs)); the developers of [Sure Footing describe constraining generated content to control challenge](https://www.gamedeveloper.com/design/keep-running-procedural-level-generation-in-sure-footing). Generated routes need playability checks: [research on runtime evaluation](https://arxiv.org/abs/2605.01783) identifies repetition, imbalance and impossible sequences as risks. For Neon Dash, use tested challenge patterns with recovery space, a capped difficulty ramp, and visible goals and personal records rather than unconstrained random obstacle placement.
+- [Geometry Dash on Steam](https://store.steampowered.com/app/322170/Geometry_Dash/) — official product description for the rhythm-platformer genre reference and its one-touch framing.
+- [Geometry Dash Wiki](https://geometrydash.wiki.gg/) — general reference for the genre's obstacle and movement-change conventions.
+- [Temple Run FAQ](https://templerun.zendesk.com/hc/en-us/articles/4414248608531-Frequently-Asked-Questions-FAQs) — examples of longer-term objectives in an endless-runner loop.
+- [Keep Running: Procedural Level Generation in Sure Footing](https://www.gamedeveloper.com/design/keep-running-procedural-level-generation-in-sure-footing) — design discussion of constraining generated content to manage challenge.

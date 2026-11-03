@@ -99,13 +99,18 @@ function extendCourse(game: Game): void {
     const height = 34 + Math.floor(random(game) * 4) * 4;
     // Sparse phrases leave four beats on either side of a gate. A gate
     // requests a single phase change without a competing jump requirement.
-    const gate = tier >= 3 && game.phrasePattern.length === 2 && game.phraseIndex === 1 && random(game) < .65;
-    const terrain = !gate && tier >= 3 && random(game) < .3;
+    // The first two arrivals are a hand-authored tutorial: a single phase
+    // gate at beat 8, followed by a small terrain lesson at beat 14. Both
+    // remain on the same musical grid as the generated course.
+    const openingGate = game.phraseStart === 8 && game.phraseIndex === 0;
+    const openingTerrain = game.phraseStart === 8 && game.phraseIndex === 1;
+    const gate = openingGate || (tier >= 3 && game.phrasePattern.length === 2 && game.phraseIndex === 1 && random(game) < .65);
+    const terrain = !gate && (openingTerrain || (tier >= 3 && random(game) < .3));
     if (terrain) {
       const gap = random(game) < .5;
       s.terrain.push({ kind: gap ? 'gap' : 'platform', x: game.nextCluster, width: gap ? 90 : 80, height: gap ? 0 : 28 });
     }
-    else if (gate) s.obstacles.push({ x: game.nextCluster, width: 22, height: 180, phase: random(game) < .5 ? 0 : 1, kind: 'gate' });
+    else if (gate) s.obstacles.push({ x: game.nextCluster, width: 22, height: 180, phase: openingGate ? 0 : (random(game) < .5 ? 0 : 1), kind: 'gate' });
     else recipe.forEach((phase, i) => s.obstacles.push({
       x: game.nextCluster + i * 28, width: 26, height, phase,
     }));
@@ -177,8 +182,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     endless: !customLayout && config.mode !== 'challenge',
     generated: !customLayout,
     randomState: Number(config.seed) >>> 0,
-    nextCluster: config.runnerX + courseDistance(config, 6 * BEAT_SECONDS),
-    nextBeat: 6, phraseStart: 6, phrasePattern: PHRASE_PATTERNS[0], phraseIndex: 0,
+    nextCluster: config.runnerX + courseDistance(config, 8 * BEAT_SECONDS),
+    nextBeat: 8, phraseStart: 8, phrasePattern: [0, 6], phraseIndex: 0,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     state: {

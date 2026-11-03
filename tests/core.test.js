@@ -92,7 +92,7 @@ test("spike collision respects the triangular tip instead of its empty corners",
 test("endless course is seeded and varies between seeds", () => {
   assert.deepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 7 }).state.obstacles);
   assert.notDeepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 8 }).state.obstacles);
-  assert.ok(createGame().state.obstacles.some(o => o.phase === null));
+  assert.ok(createGame().state.obstacles.some(o => o.kind === 'gate'));
 });
 
 test("endless ramp is capped and obstacle memory stays bounded", () => {
@@ -183,16 +183,21 @@ test('jump pressed shortly before landing is buffered', () => {
 });
 
 
-test('endless generation introduces isolated phase gates after onboarding', () => {
-  const game = createGame({ seed: 17 });
-  assert.equal(game.state.obstacles.some(o => o.kind === 'gate'), false);
+test('endless generation starts with the gate tutorial and spaces later gates', () => {
+  const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
+  const openingGate = game.state.obstacles.find(o => o.kind === 'gate');
+  assert.ok(openingGate);
+  assert.equal(openingGate.phase, 0);
+  assert.ok(Math.abs((openingGate.x - game.config.runnerX) / game.config.speed - 8 * (60 / 115)) < .01);
+  assert.ok(['gap', 'platform'].includes(game.state.terrain[0].kind));
+  assert.ok(Math.abs((game.state.terrain[0].x - game.config.runnerX) / game.config.speed - 14 * (60 / 115)) < .01);
   let foundGate = false;
   for (let i = 0; i < 120 * 50; i++) {
     game.state.runner.y = -10000;
     game.state.runner.vy = 0;
     step(game);
     const gate = game.state.obstacles.find(o => o.kind === 'gate');
-    if (gate) {
+    if (gate && gate !== openingGate) {
       foundGate = true;
       assert.ok(game.state.obstacles.every(o => o === gate || Math.abs(o.x - gate.x) >= 278));
     }

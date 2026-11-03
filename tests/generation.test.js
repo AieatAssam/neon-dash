@@ -39,6 +39,26 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   }
 });
 
+test('200 seeds in both modes retain the forgiving hand-authored opening', () => {
+  for (let seed = 1; seed <= 200; seed++) {
+    for (const mode of ['endless', 'challenge']) {
+      const game = createGame({ mode, seed, speed: 240, maxSpeed: 240 });
+      const gate = game.state.obstacles.find(o => o.kind === 'gate');
+      const terrain = game.state.terrain[0];
+      assert.ok(gate && Math.abs((gate.x - game.config.runnerX) / game.config.speed - 8 * BEAT_SECONDS) < .01, `${mode} gate seed ${seed}`);
+      assert.equal(gate.phase, 0, `${mode} opening gate phase seed ${seed}`);
+      assert.ok(terrain && Math.abs((terrain.x - game.config.runnerX) / game.config.speed - 14 * BEAT_SECONDS) < .01, `${mode} terrain seed ${seed}`);
+      assert.ok(['gap', 'platform'].includes(terrain.kind));
+    }
+    const endless = createGame({ mode: 'endless', seed });
+    play(endless, 10);
+    assert.equal(endless.state.status, 'running', `endless seed ${seed}`);
+    const ramping = createGame({ mode: 'challenge', seed });
+    play(ramping, 45);
+    assert.equal(ramping.state.status, 'won', `seed ${seed}`);
+  }
+});
+
 
 test('onboarding has at least 2.5 seconds before the first hazard', () => {
   for (const speed of [240, 280, 340]) {
@@ -50,7 +70,7 @@ test('onboarding has at least 2.5 seconds before the first hazard', () => {
 test('speed-ramped arrivals stay within one pixel of the beat grid', () => {
   const game = createGame({ seed: 7 });
   const firstX = game.state.obstacles[0].x;
-  while (game.state.time + game.config.fixedStep / 2 < 6 * BEAT_SECONDS) {
+  while (game.state.time + game.config.fixedStep / 2 < 8 * BEAT_SECONDS) {
     game.state.runner.y = -10000;
     game.state.runner.vy = 0;
     step(game);

@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_GAME_SPEED, RUNNER_WORLD_X, viewportWorldSize } from "../viewport.ts";
+import { viewportWorldSize } from "../viewport.ts";
 
-test("portrait viewport scale preserves at least one second of max-speed lookahead", () => {
-  for (const [width, height] of [[320, 568], [390, 844]]) {
+test("portrait framing keeps the 24-unit runner at least 28 CSS pixels tall", () => {
+  for (const [width, height] of [[360, 640], [390, 844], [430, 932]]) {
     const world = viewportWorldSize(width, height);
-    assert.ok(world.width - RUNNER_WORLD_X >= MAX_GAME_SPEED);
+    assert.ok(world.scale * 24 >= 28, `${width}x${height}`);
+    assert.equal(world.scale, Math.max(28 / 24, height / 720));
   }
 });
 

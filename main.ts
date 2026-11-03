@@ -1,3 +1,4 @@
+import { ART_PALETTES, GAMEPLAY_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
 import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
@@ -32,13 +33,15 @@ let renderedProgress = -1;
 let renderedOrbs = -1;
 let viewportMetrics = { width: 680, height: 480, dpr: 1 };
 let renderDirty = true;
-let adaptiveDpr = 1;
-let slowFrames = 0;
-let fastFrames = 0;
-let lastFrameTime = 0;
-const CYAN = '#37ffe7';
-const VIOLET = '#c778ff';
+const CYAN = GAMEPLAY_COLORS.cyan;
+const VIOLET = GAMEPLAY_COLORS.violet;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const touchControls = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const startHint = touchControls ? 'Tap PLAY to start' : 'press <kbd>SPACE</kbd> to start';
+const retryHint = touchControls ? 'Tap to retry' : 'or press <kbd>SPACE</kbd> to restart';
+document.querySelectorAll('.menu-controls').forEach(el => { if (touchControls) el.innerHTML = '<span>Tap to jump</span><span>Tap the colour button to switch</span>'; });
+$('overlayHint').innerHTML = startHint;
+$('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite colour for gates. Pink spikes always hurt.';
 let vibrationEnabled = true;
 try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
 const vibrationButton = $('vibrationBtn');
@@ -71,13 +74,13 @@ const phaseButton = document.createElement('button');
 phaseButton.className = 'phase-button';
 phaseButton.id = 'phaseBtn';
 phaseButton.hidden = true;
-phaseButton.innerHTML = '<span>◈</span> CYAN <kbd>X</kbd>';
-phaseButton.setAttribute('aria-label', 'Switch phase. Cyan is active. Keyboard X or Shift.');
+phaseButton.innerHTML = touchControls ? '<span>◈</span> CYAN' : '<span>◈</span> CYAN <kbd>X</kbd>';
+phaseButton.setAttribute('aria-label', touchControls ? 'Switch phase. Cyan is active.' : 'Switch phase. Cyan is active. Keyboard X or Shift.');
 $('viewport').append(phaseButton);
 const phaseHint = document.createElement('span');
 phaseHint.className = 'phase-help';
 phaseHint.hidden = true;
-phaseHint.textContent = 'X / SHIFT · SWITCH TO THE OPPOSITE COLOR FOR GATES';
+phaseHint.textContent = touchControls ? 'TAP COLOUR TO SWITCH' : 'X / SHIFT · SWITCH TO THE OPPOSITE COLOR FOR GATES';
 $('viewport').append(phaseHint);
 function updateBest() {
  $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
@@ -87,7 +90,7 @@ updateBest();
 function showObjective(newUnlocks = []) {
  const next = ACHIEVEMENTS.find(a => !progress.unlocked.includes(a.id));
  const unlocked = ACHIEVEMENTS.filter(a => newUnlocks.includes(a.id));
- const describe = text => text.replace(/(\d+) units/g, (_, n) => `${Number(n) / 10}m`).replace('neutral spikes', 'gold spikes');
+ const describe = text => text.replace(/(\d+) units/g, (_, n) => `${Number(n) / 10}m`).replace('neutral spikes', 'pink spikes');
  $('achievementUnlock').textContent = unlocked.length ? `✦ UNLOCKED · ${unlocked.map(a => a.name).join(' + ')}` : `${progress.unlocked.length} / ${ACHIEVEMENTS.length} ACHIEVEMENTS`;
  $('achievementGoal').textContent = next ? `NEXT · ${next.name.toUpperCase()} — ${describe(next.description)}` : 'ALL SIGNALS FOUND · CHASE A NEW BEST';
 }
@@ -117,17 +120,17 @@ function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
  game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
- renderDirty = true; lastFrameTime = 0; lastTime = 0;
+ renderDirty = true; lastTime = 0;
  jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
- $('status').textContent = `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
+ $('status').textContent = touchControls ? `Attempt ${attempt}. Tap to jump. Tap the colour button to switch.` : `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
  playMusic();
 }
 function pause() {
- if (mode === 'running') { jumpHeld = false; lastFrameTime = 0; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastFrameTime = 0; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
+ if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
 }
 function finish() {
  const distance = meters();
@@ -146,13 +149,14 @@ function finish() {
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
  $('overlayKicker').textContent = mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
- $('overlayDescription').innerHTML = mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
+ $('overlayDescription').innerHTML = mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `PINK SPIKES ARE ALWAYS DANGEROUS · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
  $('playLabel').textContent = 'RETRY SAME CIRCUIT';
  $('freshBtn').hidden = false;
  $('seedText').textContent = `CIRCUIT SEED · ${runSeed}`;
- $('overlayHint').innerHTML = 'or press <kbd>SPACE</kbd> to restart';
- $('status').textContent = mode === 'won' ? 'Level complete! Press Space to play again.' : `Run ended at ${distance} meters. Press Space to try again.`;
+ $('overlayHint').innerHTML = retryHint;
+ $('status').textContent = mode === 'won' ? (touchControls ? 'Level complete! Tap to play again.' : 'Level complete! Press Space to play again.') : `Run ended at ${distance} meters. ${touchControls ? 'Tap to try again.' : 'Press Space to try again.'}`;
 }
+if (import.meta.env.DEV) (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
 document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
@@ -164,9 +168,9 @@ document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(inpu
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
  $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
  $('overlayTitle').textContent = 'NEON DASH';
- $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Gold is always solid.';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Pink spikes always hurt.';
  $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
- $('overlayHint').innerHTML = 'press <kbd>SPACE</kbd> to start'; mode = 'ready'; updateBest();
+ $('overlayHint').innerHTML = startHint; mode = 'ready'; updateBest();
 }));
 $('playBtn').addEventListener('click', () => start(false));
 $('freshBtn').addEventListener('click', () => start(true));
@@ -201,10 +205,11 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && mod
 
 function render(time) {
  const { width, height } = viewportMetrics;
- const worldOffsetY = Math.max(0, height * .72 - game.config.groundY);
+ const worldOffsetY = height * (viewportMetrics.width < 500 ? .62 : .72) - game.config.groundY;
  ctx.setTransform(surface.width/width,0,0,surface.height/height,0,0);
  const s = game.state;
  const c = game.config;
+ const glowUnit = c.runnerWidth * surface.width / width;
  const color = s.phase === 0 ? CYAN : VIOLET;
  if (renderedPhase !== s.phase) {
   document.documentElement.style.setProperty('--phase', color);
@@ -213,12 +218,7 @@ function render(time) {
  const clock = reducedMotion ? 0 : time * .001;
  const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
  const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
- const palettes = [
-  { top: '#100728', horizon: '#173855', floor: '#120b30', pink: '#ff3ca6', gold: '#ffbd55', blue: '#347cff' },
-  { top: '#150827', horizon: '#462252', floor: '#180b2d', pink: '#ff5a79', gold: '#ffd358', blue: '#9161ff' },
-  { top: '#061a2c', horizon: '#124458', floor: '#071b31', pink: '#fa55e7', gold: '#a8ff67', blue: '#24b8ff' },
- ];
- const palette = palettes[Math.floor(game.state.distance / 4800) % palettes.length];
+ const palette = ART_PALETTES[Math.floor(game.state.distance / 4800) % ART_PALETTES.length];
  const bg = ctx.createLinearGradient(0, 0, 0, height);
  bg.addColorStop(0, palette.top); bg.addColorStop(.7, palette.horizon); bg.addColorStop(1, palette.floor);
  ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
@@ -226,7 +226,8 @@ function render(time) {
  const halo = ctx.createRadialGradient(width * .65, height * .48, 0, width * .65, height * .48, width * .65);
  halo.addColorStop(0, palette.pink + '28'); halo.addColorStop(.48, palette.blue + '0d'); halo.addColorStop(1, palette.blue + '00');
  ctx.fillStyle = halo; ctx.fillRect(0, 0, width, height);
- ctx.save(); ctx.translate(0, worldOffsetY);
+ const cameraX = canvas.clientWidth / canvas.clientHeight < .75 ? Math.min(0, width * .16 - c.runnerX) : 0;
+ ctx.save(); ctx.translate(cameraX, worldOffsetY);
  // Monumental rings and angular skylines remain behind the collision silhouettes.
  for (let i = 0; i < 3; i++) {
   const x = width * .68 + i * 235 - (s.distance * .07 % 235);
@@ -234,71 +235,72 @@ function render(time) {
   ctx.strokeStyle = i % 2 ? palette.blue + '42' : palette.pink + '52';
   ctx.lineWidth = i === 0 ? 2 : 1;
   ctx.beginPath(); ctx.arc(x, y, 83 + i * 10, Math.PI * 1.08, Math.PI * 2.84); ctx.stroke();
-  ctx.strokeStyle = palette.gold + '70';
+  ctx.strokeStyle = palette.blue + '70';
   ctx.beginPath(); ctx.arc(x, y, 89 + i * 10, Math.PI * 1.15, Math.PI * 1.35); ctx.stroke();
  }
  for (let i = -1; i < Math.ceil(width / 110) + 2; i++) {
   const x = i * 110 - (s.distance * .18 % 110);
   const h = 55 + (Math.sin(i * 2.7) + 1) * 42;
-  ctx.fillStyle = '#0c132bd9';
+  ctx.fillStyle = GAMEPLAY_COLORS.void + 'd9';
   ctx.strokeStyle = (i % 2 ? palette.blue : palette.pink) + '65'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY - h);
   ctx.lineTo(x + 30, c.groundY - h - 22); ctx.lineTo(x + 76, c.groundY - h - 22); ctx.lineTo(x + 76, c.groundY); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.strokeStyle = (i % 3 ? palette.blue : palette.gold) + '88';
+  ctx.strokeStyle = (i % 3 ? palette.blue : palette.pink) + '88';
   ctx.beginPath(); ctx.moveTo(x + 13, c.groundY - h + 9); ctx.lineTo(x + 13, c.groundY - 17); ctx.lineTo(x + 29, c.groundY - 17); ctx.stroke();
-  ctx.fillStyle = palette.gold + '77'; ctx.fillRect(x + 52, c.groundY - h, 4, 4);
+  ctx.fillStyle = palette.blue + '77'; ctx.fillRect(x + 52, c.groundY - h, 4, 4);
  }
  ctx.lineWidth = .7; ctx.strokeStyle = palette.blue + '22';
  for (let x = -(s.distance * .32 % 65); x < width; x += 65) { ctx.beginPath(); ctx.moveTo(x, -worldOffsetY); ctx.lineTo(x, c.groundY); ctx.stroke(); }
- for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+ for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); ctx.stroke(); }
  // Cut holes in the runway so gaps remain legible against the background.
  ctx.save(); ctx.beginPath();
  let floorStart = 0;
+ const worldRight = width - cameraX;
  // Terrain is appended in world order by the simulation. Avoid allocating and
  // sorting a filtered copy on every animation frame.
  for (const gap of s.terrain) {
   if (gap.kind !== 'gap') continue;
-  const left = Math.max(0, Math.min(width, gap.x - s.distance));
-  const right = Math.max(0, Math.min(width, gap.x + gap.width - s.distance));
-  if (right <= floorStart || left >= width) continue;
+  const left = Math.max(0, Math.min(worldRight, gap.x - s.distance));
+  const right = Math.max(0, Math.min(worldRight, gap.x + gap.width - s.distance));
+  if (right <= floorStart || left >= worldRight) continue;
   ctx.rect(floorStart, c.groundY - 2, Math.max(0, left - floorStart), height);
   floorStart = right;
  }
- ctx.rect(floorStart, c.groundY - 2, Math.max(0, width - floorStart), height); ctx.clip();
+ ctx.rect(floorStart, c.groundY - 2, Math.max(0, worldRight - floorStart), height); ctx.clip();
  const floor = ctx.createLinearGradient(0, c.groundY, 0, height);
- floor.addColorStop(0, palette.floor); floor.addColorStop(1, '#040a19');
- ctx.fillStyle = floor; ctx.fillRect(0, c.groundY, width, height);
+ floor.addColorStop(0, palette.floor); floor.addColorStop(1, GAMEPLAY_COLORS.void);
+ ctx.fillStyle = floor; ctx.fillRect(0, c.groundY, worldRight, height);
  ctx.strokeStyle = palette.pink + '58'; ctx.lineWidth = 1;
  for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.beginPath(); ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); ctx.stroke(); }
- for (let y = c.groundY + 18; y < height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+ for (let y = c.groundY + 18; y < height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); ctx.stroke(); }
  // A hot white core and wide bloom make the runway read as emitted light.
- ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 23 * pulse; ctx.strokeStyle = color; ctx.lineWidth = 3;
- ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(width, c.groundY + .5); ctx.stroke();
- ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = '#d9fff8'; ctx.stroke();
- ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(width, c.groundY + 7); ctx.stroke(); ctx.restore();
+ ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = glowUnit * pulse; ctx.strokeStyle = color; ctx.lineWidth = 3;
+ ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(worldRight, c.groundY + .5); ctx.stroke();
+ ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.stroke();
+ ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(worldRight, c.groundY + 7); ctx.stroke(); ctx.restore();
  ctx.restore();
  for (const terrain of s.terrain) {
-  const x = terrain.x - s.distance; if (x < -terrain.width || x > width) continue;
+  const x = terrain.x - s.distance; if (x < -terrain.width || x > worldRight) continue;
   ctx.save();
   if (terrain.kind === 'gap') {
-   ctx.fillStyle = '#030713'; ctx.fillRect(x, c.groundY, terrain.width, height);
-   ctx.strokeStyle = palette.pink; ctx.lineWidth = 2; ctx.beginPath();
+   ctx.fillStyle = GAMEPLAY_COLORS.void; ctx.fillRect(x, c.groundY, terrain.width, height);
+   ctx.strokeStyle = GAMEPLAY_COLORS.danger; ctx.lineWidth = 2; ctx.beginPath();
    ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY + 12);
    ctx.moveTo(x + terrain.width, c.groundY); ctx.lineTo(x + terrain.width, c.groundY + 12); ctx.stroke();
   } else {
-   ctx.fillStyle = '#172941'; ctx.strokeStyle = palette.gold; ctx.lineWidth = 2; ctx.shadowColor = palette.gold; ctx.shadowBlur = 12;
+   ctx.fillStyle = GAMEPLAY_COLORS.platformFill; ctx.strokeStyle = GAMEPLAY_COLORS.platform; ctx.lineWidth = 2; ctx.shadowColor = GAMEPLAY_COLORS.platform; ctx.shadowBlur = glowUnit * .5;
    ctx.fillRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
    ctx.strokeRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
-   ctx.shadowBlur = 0; ctx.strokeStyle = '#fff3cb'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
+   ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
   }
   ctx.restore();
  }
  for (const obstacle of s.obstacles) {
-  const x = obstacle.x - s.distance; if (x < -60 || x > width + 60) continue;
+  const x = obstacle.x - s.distance; if (x < -60 || x > worldRight + 60) continue;
   const neutral = obstacle.phase == null;
-  const active = neutral || obstacle.phase === s.phase; const oc = neutral ? '#ffb840' : obstacle.phase === 0 ? CYAN : VIOLET;
-  ctx.save(); ctx.globalAlpha = active ? 1 : .35;
-  ctx.shadowBlur = active ? 20 * pulse : 0; ctx.shadowColor = oc; ctx.strokeStyle = oc;
+  const active = neutral || obstacle.phase === s.phase; const oc = neutral ? GAMEPLAY_COLORS.danger : obstacle.phase === 0 ? CYAN : VIOLET;
+  ctx.save(); ctx.globalAlpha = 1; if (!active) ctx.setLineDash([4, 3]);
+  ctx.shadowBlur = active ? glowUnit * .85 * pulse : 0; ctx.shadowColor = oc; ctx.strokeStyle = active ? oc : GAMEPLAY_COLORS.off;
   const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
   fill.addColorStop(0, active ? oc + 'bb' : oc + '16'); fill.addColorStop(1, active ? oc + '18' : oc + '08');
   ctx.fillStyle = fill; ctx.lineWidth = active ? 2.6 : 1.2;
@@ -313,37 +315,37 @@ function render(time) {
    ctx.shadowBlur = 0; ctx.strokeStyle = oc; ctx.lineWidth = 1;
    for (let y = c.groundY - obstacle.height + 12; y < c.groundY - 5; y += 18) { ctx.beginPath(); ctx.moveTo(x + 4, y); ctx.lineTo(x + obstacle.width - 4, y + 7); ctx.stroke(); }
   }
-  if (active) { ctx.shadowBlur = 0; ctx.strokeStyle = '#f2ffff'; ctx.lineWidth = .8; ctx.stroke(); ctx.fillStyle = '#edffff'; ctx.fillRect(x + obstacle.width / 2 - 1, c.groundY - obstacle.height + 6, 2, 8); }
+  if (active) { ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = .8; ctx.stroke(); ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(x + obstacle.width / 2 - 1, c.groundY - obstacle.height + 6, 2, 8); }
   ctx.restore();
  }
  for (const orb of s.collectibles) {
   const x = orb.x - s.distance;
-  if (x < -orb.radius - 20 || x > width + orb.radius + 20) continue;
+  if (x < -orb.radius - 20 || x > worldRight + orb.radius + 20) continue;
   const bob = reducedMotion ? 0 : Math.sin(clock * 4 + orb.x * .02) * 3;
   ctx.save(); ctx.translate(x, orb.y + bob); ctx.rotate(Math.PI / 4 + (reducedMotion ? 0 : Math.sin(clock * 2 + orb.x) * .12));
-  ctx.shadowColor = palette.gold; ctx.shadowBlur = 17 * pulse; ctx.fillStyle = '#ffe69a'; ctx.strokeStyle = palette.gold; ctx.lineWidth = 2;
+  ctx.shadowColor = GAMEPLAY_COLORS.gold; ctx.shadowBlur = glowUnit * .7 * pulse; ctx.fillStyle = GAMEPLAY_COLORS.reward; ctx.strokeStyle = GAMEPLAY_COLORS.gold; ctx.lineWidth = 2;
   ctx.fillRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3); ctx.strokeRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3);
-  ctx.shadowBlur = 0; ctx.fillStyle = '#fff9dc'; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
+  ctx.shadowBlur = 0; ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
  }
- const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<width){ctx.strokeStyle='#b9e786';ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#b9e786';ctx.font='9px sans-serif';ctx.fillText('FINISH',finishX-15,60);}
+ const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<worldRight){ctx.strokeStyle=GAMEPLAY_COLORS.platform;ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=GAMEPLAY_COLORS.platform;ctx.font=`${Math.max(9, 12 * width / (canvas.clientWidth || 1))}px sans-serif`;ctx.fillText('FINISH',finishX-15,60);}
  const r=s.runner;
  if(mode==='running'){ctx.fillStyle=color;for(let i=1;i<8;i++){ctx.globalAlpha=.2*(1-i/8);const size=r.width*(1-i/11);ctx.fillRect(r.x-i*12,r.y+(r.height-size)/2,size,size);}ctx.globalAlpha=1;}
  if(!reducedMotion && !r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
  ctx.save();ctx.translate(r.x+r.width/2,r.y+r.height/2);ctx.rotate(rotation);
- ctx.shadowColor=color;ctx.shadowBlur=28*pulse;ctx.fillStyle=s.phase===0?'#138f99':'#8a35bd';ctx.strokeStyle=color;ctx.lineWidth=3;
+ ctx.shadowColor=color;ctx.shadowBlur=glowUnit*pulse;ctx.fillStyle=s.phase===0?GAMEPLAY_COLORS.runnerCyanFill:GAMEPLAY_COLORS.runnerVioletFill;ctx.strokeStyle=color;ctx.lineWidth=3;
  ctx.fillRect(-r.width/2,-r.height/2,r.width,r.height);ctx.strokeRect(-r.width/2,-r.height/2,r.width,r.height);
- ctx.shadowBlur=0;ctx.strokeStyle='#eaffff';ctx.lineWidth=1;ctx.strokeRect(-r.width/2+3,-r.height/2+3,r.width-6,r.height-6);
- ctx.fillStyle='#f2ffff';ctx.fillRect(-5,-5,3,3);ctx.fillRect(3,-5,3,3);ctx.fillRect(-4,3,9,2);ctx.restore();
+ ctx.shadowBlur=0;ctx.strokeStyle=GAMEPLAY_COLORS.white;ctx.lineWidth=1;ctx.strokeRect(-r.width/2+3,-r.height/2+3,r.width-6,r.height-6);
+ ctx.fillStyle=GAMEPLAY_COLORS.white;ctx.fillRect(-5,-5,3,3);ctx.fillRect(3,-5,3,3);ctx.fillRect(-4,3,9,2);ctx.restore();
  // Colored sparks drift independently of the world; counts stay fixed on mobile.
  for(let i=0;i<24;i++){
-  ctx.fillStyle=[CYAN,palette.pink,palette.gold,palette.blue][i%4];ctx.globalAlpha=.25+(i%3)*.13;
+  ctx.fillStyle=[CYAN,palette.pink,GAMEPLAY_COLORS.platform,palette.blue][i%4];ctx.globalAlpha=.25+(i%3)*.13;
   const x=(i*137+width-(s.distance*.12+clock*9)%width)%width;
   const y=15+(i*43)%255+Math.sin(clock+i)*4;
   ctx.fillRect(x,y,i%5===0?3:1.5,i%5===0?3:1.5);
  }ctx.globalAlpha=1;
  const effectAge=(time-visualEvent.at)/1000;
  if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win','orb'].includes(visualEvent.name)){
-  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?palette.gold:color;ctx.lineWidth=2;
+  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?GAMEPLAY_COLORS.gold:color;ctx.lineWidth=2;
   const cx=r.x+r.width/2,cy=r.y+r.height/2;
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
@@ -364,9 +366,9 @@ function render(time) {
  const phaseName=s.phase===0?'CYAN':'VIOLET';
  if (phaseButton.dataset.phase !== phaseName) {
   phaseButton.dataset.phase=phaseName;
-  phaseButton.innerHTML=`<span>◈</span> ${phaseName} <kbd>X</kbd>`;
+  phaseButton.innerHTML=touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
   phaseButton.style.color=color;
-  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Keyboard X or Shift.`);
+  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active.${touchControls ? '' : ' Keyboard X or Shift.'}`);
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
@@ -387,8 +389,8 @@ class RunScene extends Phaser.Scene {
   const rect = canvas.getBoundingClientRect();
   // A hidden or collapsed canvas has no usable coordinate system. Keep the
   // previous frame until it becomes visible again.
-  if (rect.width <= 0 || rect.height <= 0) { lastFrameTime = 0; lastTime = 0; return; }
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * adaptiveDpr;
+  if (rect.width <= 0 || rect.height <= 0) { lastTime = 0; return; }
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const worldSize = viewportWorldSize(rect.width, rect.height);
   const scale = worldSize.scale;
   const nextWidth = worldSize.width;
@@ -397,20 +399,14 @@ class RunScene extends Phaser.Scene {
   viewportMetrics = { width: nextWidth, height: nextHeight, dpr };
   const width = Math.max(1, Math.round(rect.width * dpr));
   const height = Math.max(1, Math.round(rect.height * dpr));
+  if (this.scale.width !== width || this.scale.height !== height) {
+   this.scale.resize(width, height);
+  }
   if (this.texture.width !== width || this.texture.height !== height) {
    this.texture.setSize(width, height);
    this.picture.setSizeToFrame();
    renderDirty = true;
   }
-  if (mode === 'running' && lastFrameTime) {
-   const frameMs = time - lastFrameTime;
-   if (frameMs > 24) { slowFrames++; fastFrames = 0; }
-   else if (frameMs < 18) { fastFrames++; slowFrames = 0; }
-   else { slowFrames = Math.max(0, slowFrames - 1); fastFrames = Math.max(0, fastFrames - 1); }
-   if (slowFrames >= 90 && adaptiveDpr > .55) { adaptiveDpr = Math.max(.55, adaptiveDpr - .15); slowFrames = 0; }
-   else if (fastFrames >= 240 && adaptiveDpr < 1) { adaptiveDpr = Math.min(1, adaptiveDpr + .1); fastFrames = 0; }
-  }
-  lastFrameTime = mode === 'running' ? time : 0;
   tick(time);
   if (this.picture.displayWidth !== this.scale.width || this.picture.displayHeight !== this.scale.height) {
    this.picture.setDisplaySize(this.scale.width, this.scale.height);
@@ -426,7 +422,7 @@ new Phaser.Game({
  width: canvas.clientWidth || 680,
  height: canvas.clientHeight || 480,
  transparent: true,
- scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
+ scale: { mode: Phaser.Scale.NONE },
  scene: RunScene,
  audio: { noAudio: true },
 });

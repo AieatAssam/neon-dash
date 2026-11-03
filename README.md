@@ -2,14 +2,27 @@
 
 [Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
-A full-screen neon runner with a finite Challenge mode and an Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid gold spikes in either phase. Each seeded circuit builds obstacle phrases around the soundtrack’s beat and increases in speed; collect optional signal orbs, chase your best distance, and unlock achievements. Retry the same circuit to learn its patterns, or choose a new random circuit after a run.
+Neon Dash is a full-screen arcade runner about timing jumps and switching phases. Play a finite Challenge circuit or survive as long as possible in Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid pink spikes in either phase. Seeded obstacle phrases follow the soundtrack's beat and increase in speed. Optional signal orbs, local records, and achievements give each run extra goals.
 
-Use Space, Up, or W to jump; hold to jump again on landing; X or Shift switches phase. On touch screens, use the on-screen jump and phase controls. P or Escape pauses. Sound is optional, and supported devices provide optional short haptic feedback, controlled separately from sound. Records and achievements are saved locally in your browser.
+## Controls
 
-Install dependencies with `npm ci`, then run `npm run dev` and open the local address printed by Vite. Run `npm run build` to type-check and create the production site in `dist/`; `npm run preview` serves that build locally. The build uses relative paths and the included GitHub Actions workflow deploys `dist/` to GitHub Pages. No backend is required.
+- **Space, Up, or W:** jump. Hold to jump again when you land.
+- **X or Shift:** switch phase.
+- **P or Escape:** pause or resume.
+- **Touch screens:** use the on-screen jump and phase controls.
 
-Run simulation tests with `npm test`. See [RESEARCH.md](RESEARCH.md) and [game feel research](GAME_FEEL_RESEARCH.md) for design references and [ATTRIBUTION.md](ATTRIBUTION.md) for audio credits.
+Sound is optional. Supported devices can also provide short haptic feedback; sound and vibration are controlled separately. Records and achievements stay in local browser storage.
 
-## Screenshot
+## Run locally
 
-![Neon Dash menu with Challenge and Endless modes](screenshots/menu.png)
+Install dependencies with `npm ci`, then run `npm run dev` and open the local address printed by Vite. `npm run build` type-checks and creates the production site in `dist/`; `npm run preview` serves that build locally. No backend is required. The GitHub Actions workflow deploys `dist/` to GitHub Pages.
+
+## Project notes
+
+Neon Dash is an independent project inspired by the broad one-button rhythm-platformer genre and Geometry Dash. It is not affiliated with, endorsed by, or connected to RobTop Games or Geometry Dash. Geometry Dash is a trademark of its respective owner. Vite splits Phaser into a separate engine chunk (about 340 kB gzipped); the game loads it when the page starts. See [RESEARCH.md](RESEARCH.md) for design references and [ATTRIBUTION.md](ATTRIBUTION.md) for music and sound credits. The project source is available under the MIT License; included audio assets retain their own CC0 dedication.
+
+## Media
+
+![Neon Dash gameplay](docs/media/gameplay.png)
+
+[Watch a short gameplay clip](docs/media/gameplay.webm).
