@@ -3,8 +3,14 @@
  * Coordinates are in world units; positive y points down.
  */
 
+/** Percentage of the playable distance covered in a finite challenge. */
+export function challengeProgress(distance: number, runnerX: number, finishX: number): number {
+  return Math.max(0, Math.min(100, distance / (finishX - runnerX) * 100));
+}
+
 export type Phase = 0 | 1;
 export interface GameConfig {
+  mode: 'endless' | 'challenge';
   runnerX: number; runnerWidth: number; runnerHeight: number; groundY: number;
   gravity: number; jumpVelocity: number; speed: number; obstacleWidth: number;
   obstacleHeight: number; obstacleGap: number; obstacleStartX: number;
@@ -27,11 +33,12 @@ export interface GameState {
 /** Jump is held; phase switching is an edge-triggered action. */
 export interface Input { jump?: boolean; togglePhase?: boolean }
 export interface Game {
-  config: GameConfig; endless: boolean; randomState: number; nextCluster: number;
+  config: GameConfig; endless: boolean; generated: boolean; randomState: number; nextCluster: number;
   accumulator: number; pendingInput: Required<Input>; state: GameState;
 }
 
 export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
+  mode: 'endless',
   runnerX: 100,
   runnerWidth: 24,
   runnerHeight: 24,
@@ -68,7 +75,7 @@ function random(game: Game): number {
 
 function extendCourse(game: Game): void {
   const s = game.state;
-  while (game.nextCluster < s.distance + 2400) {
+  while (game.nextCluster < Math.min(s.distance + 2400, game.config.finishX - 400)) {
     const tier = Math.min(6, 2 + Math.floor(s.time / 15));
     const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
     const height = 34 + Math.floor(random(game) * 4) * 4;
@@ -115,14 +122,16 @@ function overlaps(a: Box, b: Box): boolean {
     a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
+/** Explicit challenge mode keeps seeded generation and adds a finite finish.
+ * Layout overrides without a mode retain the original fixed-course behavior. */
 export function createGame(overrides: Partial<GameConfig> = {}): Game {
   const layoutOverride = ["obstacleStartX", "obstacleGap", "obstacleWidth", "obstacleHeight"].some(key => Object.hasOwn(overrides, key));
-  const config = { ...DEFAULT_CONFIG, ...(layoutOverride ? { finishX: 9000 } : {}), ...overrides };
-  if (!(config.fixedStep > 0) || !(config.speed >= 0) || !(config.finishX > config.runnerX)) {
+  const config = { ...DEFAULT_CONFIG, ...(layoutOverride || overrides.mode === 'challenge' ? { finishX: 9000 } : {}), ...overrides };
+  if ((config.mode === 'challenge' && !Number.isFinite(config.finishX)) || !(config.fixedStep > 0) || !(config.speed >= 0) || !(config.finishX > config.runnerX)) {
     throw new RangeError("Invalid simulation configuration");
   }
-  const obstacleCount = Math.max(0, Math.ceil((config.finishX - config.obstacleStartX) / config.obstacleGap));
-  const customLayout = ["obstacleStartX", "obstacleGap", "obstacleWidth", "obstacleHeight", "finishX"].some(key => Object.hasOwn(overrides, key));
+  const customLayout = ["obstacleStartX", "obstacleGap", "obstacleWidth", "obstacleHeight", "finishX"].some(key => Object.hasOwn(overrides, key)) && overrides.mode !== 'challenge';
+  const obstacleCount = customLayout ? Math.max(0, Math.ceil((config.finishX - config.obstacleStartX) / config.obstacleGap)) : 0;
   const obstacles: Obstacle[] = customLayout ? Array.from({ length: obstacleCount }, (_, i) => ({
     x: config.obstacleStartX + i * config.obstacleGap,
     width: config.obstacleWidth,
@@ -132,7 +141,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
 
   const game: Game = {
     config,
-    endless: !customLayout,
+    endless: !customLayout && config.mode !== 'challenge',
+    generated: !customLayout,
     randomState: Number(config.seed) >>> 0,
     nextCluster: 560,
     accumulator: 0,
@@ -155,7 +165,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       jumpBuffer: 0,
     },
   };
-  if (game.endless) extendCourse(game);
+  if (game.generated) extendCourse(game);
   return game;
 }
 
@@ -178,11 +188,11 @@ export function step(game: Game, input: Input = {}): GameState {
   const dt = c.fixedStep;
   s.jumpBuffer = Math.max(0, s.jumpBuffer - dt);
   s.time += dt;
-  s.speed = game.endless ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
+  s.speed = game.generated ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
   s.level = 1 + Math.floor(s.time / 20);
   const previousWorldX = s.distance + s.runner.x;
   s.distance += s.speed * dt;
-  if (game.endless) extendCourse(game);
+  if (game.generated) extendCourse(game);
   const previousBottom = s.runner.y + s.runner.height;
   s.runner.grounded = false;
   s.runner.vy += c.gravity * dt;

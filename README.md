@@ -2,9 +2,9 @@
 
 [Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
-A full-screen neon endless runner. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid gold spikes in either phase. Each run generates a new circuit and increases in speed; collect optional signal orbs, chase your best distance, and unlock achievements. Retry the same circuit to learn its patterns, or choose a new random circuit after a run.
+A full-screen neon runner with a finite Challenge mode and an Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid gold spikes in either phase. Each circuit is seeded and increases in speed; collect optional signal orbs, chase your best distance, and unlock achievements. Retry the same circuit to learn its patterns, or choose a new random circuit after a run.
 
-Use Space, Up, or W to jump; hold to jump again on landing; X or Shift switches phase. On touch screens, use the on-screen jump and phase controls. P or Escape pauses. Sound is optional, and supported devices provide short haptic feedback. Records and achievements are saved locally in your browser.
+Use Space, Up, or W to jump; hold to jump again on landing; X or Shift switches phase. On touch screens, use the on-screen jump and phase controls. P or Escape pauses. Sound is optional, and supported devices provide optional short haptic feedback, controlled separately from sound. Records and achievements are saved locally in your browser.
 
 Install dependencies with `npm ci`, then run `npm run dev` and open the local address printed by Vite. Run `npm run build` to type-check and create the production site in `dist/`; `npm run preview` serves that build locally. The build uses relative paths and the included GitHub Actions workflow deploys `dist/` to GitHub Pages. No backend is required.
 
@@ -12,4 +12,4 @@ Run simulation tests with `npm test`. See [RESEARCH.md](RESEARCH.md) and [game f
 
 ## Screenshot
 
-![Neon Dash start screen showing the neon circuit and phase controls](screenshots/neon-dash.png)
+![Neon Dash menu with Challenge and Endless modes](screenshots/menu.png)

@@ -11,10 +11,12 @@ export const ACHIEVEMENTS = Object.freeze([
 export function evaluateAchievements(run) {
   return ACHIEVEMENTS.filter(a => a.test(run)).map(a => a.id);
 }
-export function mergeProgress(progress, run) {
+export function mergeProgress(progress, run, mode = 'endless', challengeProgress = 0) {
   const previous = Array.isArray(progress.unlocked) ? progress.unlocked : [];
   return {
-    bestDistance: Math.max(Number(progress.bestDistance) || 0, Math.floor(run.distance)),
+    bestDistance: mode === 'endless' ? Math.max(Number(progress.bestDistance) || 0, Math.floor(run.distance)) : (Number(progress.bestDistance) || 0),
+    challengeBest: mode === 'challenge' ? Math.max(Number(progress.challengeBest) || 0, Math.min(100, Math.max(0, Math.floor(challengeProgress)))) : (Number(progress.challengeBest) || 0),
+    challengeWins: (Number(progress.challengeWins) || 0) + (mode === 'challenge' && run.status === 'won' ? 1 : 0),
     runs: (Number(progress.runs) || 0) + 1,
     unlocked: [...new Set([...previous, ...evaluateAchievements(run)])],
   };

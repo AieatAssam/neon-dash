@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { createGame, step } from './core';
+import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 
 const $ = (id: string): any => document.getElementById(id);
@@ -7,10 +7,11 @@ const canvas = $('game') as HTMLCanvasElement;
 const surface = document.createElement('canvas');
 const ctx = surface.getContext('2d')!;
 let runSeed = Math.floor(Math.random() * 0x100000000);
-let game: any = createGame({ seed: runSeed });
+let selectedMode: 'challenge' | 'endless' = 'challenge';
+let game: any = createGame({ seed: runSeed, mode: selectedMode });
 let mode = 'ready';
 let attempt = 0;
-let progress = { bestDistance: 0, runs: 0, unlocked: [] };
+let progress = { bestDistance: 0, challengeBest: 0, challengeWins: 0, runs: 0, unlocked: [] };
 try { const saved = JSON.parse(localStorage.getItem('neon-dash-progress')); if (saved && typeof saved === 'object') progress = { ...progress, ...saved, unlocked: Array.isArray(saved.unlocked) ? saved.unlocked : [] }; } catch {}
 let best = Math.floor((Number(progress.bestDistance) || 0) / 10);
 let jumpHeld = false;
@@ -30,7 +31,22 @@ let viewportMetrics = { width: 680, height: 480, dpr: 1 };
 const CYAN = '#37ffe7';
 const VIOLET = '#c778ff';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-function haptic(pattern) { if (!reducedMotion && typeof navigator.vibrate === 'function') navigator.vibrate(pattern); }
+let vibrationEnabled = true;
+try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
+const vibrationButton = $('vibrationBtn');
+function updateVibrationButton() {
+ vibrationButton.hidden = typeof navigator.vibrate !== 'function';
+ vibrationButton.setAttribute('aria-pressed', String(vibrationEnabled));
+ vibrationButton.setAttribute('aria-label', vibrationEnabled ? 'Disable vibration' : 'Enable vibration');
+}
+updateVibrationButton();
+vibrationButton.addEventListener('click', () => {
+ vibrationEnabled = !vibrationEnabled;
+ try { localStorage.setItem('neon-dash-vibration', vibrationEnabled ? 'on' : 'off'); } catch {}
+ if (!vibrationEnabled && typeof navigator.vibrate === 'function') navigator.vibrate(0);
+ updateVibrationButton();
+});
+function haptic(pattern) { if (vibrationEnabled && !reducedMotion && typeof navigator.vibrate === 'function') navigator.vibrate(pattern); }
 const music = new Audio(new URL('./assets/space-city.mp3', import.meta.url).href);
 music.loop = true;
 music.volume = .35;
@@ -53,7 +69,11 @@ phaseHint.className = 'phase-help';
 phaseHint.hidden = true;
 phaseHint.textContent = 'X / SHIFT · SWITCH TO THE OPPOSITE COLOR FOR GATES';
 $('viewport').append(phaseHint);
-$('best').innerHTML = `${best}<span>m</span>`;
+function updateBest() {
+ $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
+ $('best').innerHTML = selectedMode === 'challenge' ? `${progress.challengeBest || 0}<span>%</span>` : `${best}<span>m</span>`;
+}
+updateBest();
 function showObjective(newUnlocks = []) {
  const next = ACHIEVEMENTS.find(a => !progress.unlocked.includes(a.id));
  const unlocked = ACHIEVEMENTS.filter(a => newUnlocks.includes(a.id));
@@ -75,7 +95,7 @@ function playSfx(name) {
 function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
- game = createGame({ seed: runSeed }); mode = 'running'; attempt++; accumulator = 0; rotation = 0;
+ game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
  jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0;
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
@@ -90,19 +110,20 @@ function pause() {
 function finish() {
  const distance = meters();
  const previousUnlocks = progress.unlocked;
- progress = mergeProgress(progress, game.state);
+ const challengePercent = mode === 'won' || game.state.status === 'won' ? 100 : challengeProgress(game.state.distance, game.config.runnerX, game.config.finishX);
+ progress = mergeProgress(progress, game.state, selectedMode, challengePercent);
  best = Math.floor(progress.bestDistance / 10);
  try { localStorage.setItem('neon-dash-progress', JSON.stringify(progress)); } catch {}
  showObjective(progress.unlocked.filter(id => !previousUnlocks.includes(id)));
- $('best').innerHTML = `${best}<span>m</span>`;
+ updateBest();
  mode = game.state.status;
  playSfx(mode === 'won' ? 'win' : 'death');
  music.pause();
  $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
- $('overlayKicker').textContent = mode === 'won' ? 'CIRCUIT COMPLETE' : `ATTEMPT ${String(attempt).padStart(2, '0')} · ${distance}m · LEVEL ${game.state.level || 1}`;
+ $('overlayKicker').textContent = mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : `ATTEMPT ${String(attempt).padStart(2, '0')} · ${distance}m · LEVEL ${game.state.level || 1}`;
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
- $('overlayDescription').innerHTML = mode === 'won' ? `Every jump. Every switch. You nailed it.<br>${game.state.stats.orbs} ORBS COLLECTED · Ready for another run?` : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
+ $('overlayDescription').innerHTML = mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
  $('playLabel').textContent = 'RETRY SAME CIRCUIT';
  $('freshBtn').hidden = false;
  $('seedText').textContent = `CIRCUIT SEED · ${runSeed}`;
@@ -111,6 +132,18 @@ function finish() {
 }
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
+document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
+ selectedMode = input.value as 'challenge' | 'endless';
+ runSeed = Math.floor(Math.random() * 0x100000000);
+ attempt = 0; $('attempt').textContent = '01';
+ game = createGame({ seed: runSeed, mode: selectedMode });
+ renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
+ $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
+ $('overlayTitle').textContent = 'NEON DASH';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Gold is always solid.';
+ $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
+ $('overlayHint').innerHTML = 'press <kbd>SPACE</kbd> to start'; mode = 'ready'; updateBest();
+}));
 $('playBtn').addEventListener('click', () => start(false));
 $('freshBtn').addEventListener('click', () => start(true));
 $('restartBtn').addEventListener('click', () => start(false));
@@ -127,7 +160,7 @@ $('soundBtn').addEventListener('click', () => {
 });
 window.addEventListener('keydown', e => {
  if (['Space', 'ArrowUp', 'KeyW', 'KeyX', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape', 'KeyR'].includes(e.code)) {
-  if (e.target instanceof HTMLButtonElement && e.code === 'Space') return;
+  if ((e.target instanceof HTMLButtonElement && e.code === 'Space') || e.target instanceof HTMLInputElement) return;
   e.preventDefault(); if (e.repeat) return;
   if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { jumpHeld = true; jump(); }
   else if (['KeyX','ShiftLeft','ShiftRight'].includes(e.code)) { if (mode === 'running') phaseQueued = true; }
@@ -289,7 +322,7 @@ function render(time) {
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
  ctx.restore();
- const level=s.level || 1;const levelProgress=(s.time % 20)/20*100;
+ const level=s.level || 1;const levelProgress=selectedMode === 'challenge' ? challengeProgress(s.distance, c.runnerX, c.finishX) : (s.time % 20)/20*100;
  if (Math.floor(levelProgress) !== renderedProgress) {
   renderedProgress = Math.floor(levelProgress);
   $('progressFill').style.width=`${renderedProgress}%`;
@@ -297,9 +330,9 @@ function render(time) {
  const currentMeters = meters();
  if (currentMeters !== renderedMeters || level !== renderedLevel) {
   renderedMeters = currentMeters; renderedLevel = level;
-  $('progressText').textContent=`${currentMeters}m`;
-  $('progressText').setAttribute('aria-label',`${currentMeters} meters. Level ${level}`);
-  $('levelText').textContent=`LEVEL ${String(level).padStart(2,'0')}`;
+  $('progressText').textContent=selectedMode === 'challenge' ? `${Math.floor(levelProgress)}%` : `${currentMeters}m`;
+  $('progressText').setAttribute('aria-label',selectedMode === 'challenge' ? `Challenge ${Math.floor(levelProgress)} percent complete` : `${currentMeters} meters. Level ${level}`);
+  $('levelText').textContent=selectedMode === 'challenge' ? 'CHALLENGE' : `LEVEL ${String(level).padStart(2,'0')}`;
  }
  if (s.stats.orbs !== renderedOrbs) { renderedOrbs = s.stats.orbs; $('orbCount').textContent = String(renderedOrbs); }
  const phaseName=s.phase===0?'CYAN':'VIOLET';

@@ -228,3 +228,66 @@ test('platforms support landings and punish side impacts', () => {
   assert.equal(landing.state.runner.y, 248);
   assert.equal(landing.state.runner.grounded, true);
 });
+
+test('challenge uses finite seeded generation with a clear finish runway', () => {
+  const a = createGame({ mode: 'challenge', seed: 17 });
+  const b = createGame({ mode: 'challenge', seed: 17 });
+  assert.equal(a.endless, false);
+  assert.equal(a.config.finishX, 9000);
+  assert.deepEqual(a.state, b.state);
+  assert.notDeepEqual(a.state.obstacles, createGame({ mode: 'challenge', seed: 18 }).state.obstacles);
+  let maxLive = 0;
+  for (let i = 0; i < 120 * 45 && a.state.status === 'running'; i++) {
+    a.state.runner.y = b.state.runner.y = -10000;
+    a.state.runner.vy = b.state.runner.vy = 0;
+    step(a); step(b);
+    maxLive = Math.max(maxLive, a.state.obstacles.length);
+    for (const item of [...a.state.obstacles, ...a.state.terrain]) {
+      assert.ok(item.x + item.width <= a.config.finishX - 200);
+    }
+    assert.ok(a.state.collectibles.every(o => o.x + o.radius < a.config.finishX));
+  }
+  assert.equal(a.state.status, 'won');
+  assert.deepEqual(a.state, b.state);
+  assert.ok(a.state.time > 25 && a.state.time < 40);
+  assert.ok(maxLive < 35);
+  const time = a.state.time;
+  step(a);
+  assert.equal(a.state.time, time);
+});
+
+test('seeded challenges can be completed with timed jumps and phase switches', () => {
+  for (const seed of [1, 7, 17, 42, 12345]) {
+    const game = createGame({ mode: 'challenge', seed });
+    for (let i = 0; i < 120 * 45 && game.state.status === 'running'; i++) {
+      const s = game.state;
+      const x = s.distance + s.runner.x;
+      const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];
+      const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
+      step(game, {
+        jump: Boolean(next && next.x - x < s.speed * .19 && s.runner.grounded),
+        togglePhase: Boolean(gate && gate.x - x < s.speed * .6 && gate.phase === s.phase),
+      });
+    }
+    assert.equal(game.state.status, 'won', `seed ${seed}, distance ${game.state.distance}`);
+    assert.ok(game.state.stats.jumps > 10);
+  }
+});
+
+test('challenge keeps endless opening recipes and rejects an infinite finish', () => {
+  assert.deepEqual(createGame({ mode: 'challenge', seed: 7 }).state.obstacles,
+    createGame({ seed: 7 }).state.obstacles);
+  assert.throws(() => createGame({ mode: 'challenge', finishX: Infinity }), RangeError);
+  const legacy = createGame({ finishX: 1000 });
+  assert.equal(legacy.generated, false);
+  assert.equal(legacy.endless, false);
+  assert.equal(legacy.state.obstacles[0].x, legacy.config.obstacleStartX);
+});
+
+test("challenge progress measures distance from the starting position to the finish", async () => {
+  const { challengeProgress } = await import("../core.ts");
+  assert.equal(challengeProgress(0, 100, 9000), 0);
+  assert.equal(challengeProgress(4450, 100, 9000), 50);
+  assert.equal(challengeProgress(8900, 100, 9000), 100);
+  assert.equal(challengeProgress(10000, 100, 9000), 100);
+});

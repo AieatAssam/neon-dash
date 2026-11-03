@@ -19,3 +19,14 @@ test('collecting ten orbs earns the signal collector achievement', () => {
   const run = { distance: 0, stats: { jumps: 0, switches: 0, neutralCleared: 0, orbs: 10 } };
   assert.ok(evaluateAchievements(run).includes('orb-10'));
 });
+
+test('challenge records and completions do not change the endless best', () => {
+  const run = { distance: 3000, status: 'won', stats: { jumps: 0, switches: 0, neutralCleared: 0, orbs: 0 } };
+  const progress = mergeProgress({ bestDistance: 6000 }, run, 'challenge', 100);
+  assert.equal(progress.bestDistance, 6000);
+  assert.equal(progress.challengeBest, 100);
+  assert.equal(progress.challengeWins, 1);
+  const endless = mergeProgress(progress, { ...run, distance: 7000 }, 'endless');
+  assert.equal(endless.bestDistance, 7000);
+  assert.equal(endless.challengeWins, 1);
+});
