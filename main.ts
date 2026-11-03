@@ -28,6 +28,11 @@ let renderedPhase = -1;
 let renderedProgress = -1;
 let renderedOrbs = -1;
 let viewportMetrics = { width: 680, height: 480, dpr: 1 };
+let renderDirty = true;
+let adaptiveDpr = 1;
+let slowFrames = 0;
+let fastFrames = 0;
+let lastFrameTime = 0;
 const CYAN = '#37ffe7';
 const VIOLET = '#c778ff';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -96,6 +101,7 @@ function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
  game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
+ renderDirty = true; lastFrameTime = 0;
  jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0;
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
@@ -104,8 +110,8 @@ function start(newCircuit = false) {
  playMusic();
 }
 function pause() {
- if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
+ if (mode === 'running') { jumpHeld = false; lastFrameTime = 0; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastFrameTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
 }
 function finish() {
  const distance = meters();
@@ -117,6 +123,7 @@ function finish() {
  showObjective(progress.unlocked.filter(id => !previousUnlocks.includes(id)));
  updateBest();
  mode = game.state.status;
+ renderDirty = true;
  playSfx(mode === 'won' ? 'win' : 'death');
  music.pause();
  $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
@@ -137,6 +144,7 @@ document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(inpu
  runSeed = Math.floor(Math.random() * 0x100000000);
  attempt = 0; $('attempt').textContent = '01';
  game = createGame({ seed: runSeed, mode: selectedMode });
+ renderDirty = true;
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
  $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
  $('overlayTitle').textContent = 'NEON DASH';
@@ -345,7 +353,7 @@ function render(time) {
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
  if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs){visualEvent={name:'orb',at:performance.now()};haptic(18);}if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
- render(time);
+ if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }
 
 class RunScene extends Phaser.Scene {
@@ -358,7 +366,7 @@ class RunScene extends Phaser.Scene {
  }
  update(time: number) {
   const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * adaptiveDpr;
   const scale = Math.min(rect.width / 680, rect.height / 480);
   viewportMetrics = { width: rect.width / scale, height: rect.height / scale, dpr };
   const width = Math.max(1, Math.round(rect.width * dpr));
@@ -366,7 +374,17 @@ class RunScene extends Phaser.Scene {
   if (this.texture.width !== width || this.texture.height !== height) {
    this.texture.setSize(width, height);
    this.picture.setSizeToFrame();
+   renderDirty = true;
   }
+  if (mode === 'running' && lastFrameTime) {
+   const frameMs = time - lastFrameTime;
+   if (frameMs > 24) { slowFrames++; fastFrames = 0; }
+   else if (frameMs < 18) { fastFrames++; slowFrames = 0; }
+   else { slowFrames = Math.max(0, slowFrames - 1); fastFrames = Math.max(0, fastFrames - 1); }
+   if (slowFrames >= 90 && adaptiveDpr > .55) { adaptiveDpr = Math.max(.55, adaptiveDpr - .15); slowFrames = 0; }
+   else if (fastFrames >= 240 && adaptiveDpr < 1) { adaptiveDpr = Math.min(1, adaptiveDpr + .1); fastFrames = 0; }
+  }
+  lastFrameTime = mode === 'running' ? time : 0;
   tick(time);
   if (this.picture.displayWidth !== this.scale.width || this.picture.displayHeight !== this.scale.height) {
    this.picture.setDisplaySize(this.scale.width, this.scale.height);
