@@ -4,6 +4,7 @@ import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
+import { upcomingAction, PREVIEW_SECONDS } from './upcoming-action';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
@@ -352,6 +353,26 @@ function render(time) {
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
  ctx.restore();
+ // Portrait framing keeps the runner readable; preview offscreen actions below the runway.
+ if (mode === 'running' && canvas.clientWidth / canvas.clientHeight < .75) {
+  const cue = upcomingAction(game);
+  if (cue) {
+   const unit = width / canvas.clientWidth;
+   const cueY = height * .62 + 48 * unit;
+   const cueWidth = 236 * unit;
+   ctx.save();
+   ctx.fillStyle = GAMEPLAY_COLORS.void; ctx.globalAlpha = .88;
+   ctx.fillRect((width - cueWidth) / 2, cueY - 17 * unit, cueWidth, 36 * unit);
+   ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+   ctx.font = `600 ${12 * unit}px sans-serif`; ctx.fillStyle = GAMEPLAY_COLORS.white;
+   ctx.fillText(`AHEAD · ${cue.label}`, width / 2, cueY - 3 * unit);
+   ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.globalAlpha = .25;
+   ctx.fillRect((width - cueWidth) / 2 + 12 * unit, cueY + 10 * unit, cueWidth - 24 * unit, 2 * unit);
+   ctx.globalAlpha = 1;
+   ctx.fillRect((width - cueWidth) / 2 + 12 * unit, cueY + 10 * unit, (cueWidth - 24 * unit) * (1 - cue.seconds / PREVIEW_SECONDS), 2 * unit);
+   ctx.restore();
+  }
+ }
  const level=s.level || 1;const levelProgress=selectedMode === 'challenge' ? challengeProgress(s.distance, c.runnerX, c.finishX) : (s.time % 20)/20*100;
  if (Math.floor(levelProgress) !== renderedProgress) {
   renderedProgress = Math.floor(levelProgress);
