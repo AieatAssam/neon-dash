@@ -4,6 +4,7 @@ export const ACHIEVEMENTS = Object.freeze([
   { id: 'jump-10', name: 'Airborne', description: 'Jump 10 times in one run', test: r => r.stats.jumps >= 10 },
   { id: 'switch-10', name: 'Phase Shifter', description: 'Switch phase 10 times in one run', test: r => r.stats.switches >= 10 },
   { id: 'neutral-5', name: 'Circuit Breaker', description: 'Clear 5 neutral spikes in one run', test: r => r.stats.neutralCleared >= 5 },
+  { id: 'orb-10', name: 'Signal Collector', description: 'Collect 10 orbs in one run', test: r => r.stats.orbs >= 10 },
   { id: 'distance-5000', name: 'Overdrive', description: 'Travel 5000 units in one run', test: r => r.distance >= 5000 },
   { id: 'distance-15000', name: 'Neon Legend', description: 'Travel 15000 units in one run', test: r => r.distance >= 15000 },
 ]);

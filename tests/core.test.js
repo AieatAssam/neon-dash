@@ -74,6 +74,13 @@ test("advance retains an input until a simulation step is available", () => {
   assert.equal(game.state.runner.grounded, false);
 });
 
+test("phase toggle is consumed once when advance simulates multiple steps", () => {
+  const game = createGame({ speed: 0, obstacleStartX: 10000 });
+  advance(game, game.config.fixedStep * 5, { togglePhase: true });
+  assert.equal(game.state.phase, 1);
+  assert.equal(game.state.stats.switches, 1);
+});
+
 test("spike collision respects the triangular tip instead of its empty corners", () => {
   const game = createGame({ runnerX: 0, runnerWidth: 4, runnerHeight: 4, groundY: 100, gravity: 0, speed: 0, obstacleStartX: 3, obstacleWidth: 28, obstacleHeight: 42, obstacleGap: 1000, finishX: 100 });
   game.state.runner.y = 58;
@@ -152,6 +159,15 @@ test('phase gates require switching and cannot be jumped', () => {
   step(game, { togglePhase: true });
   for (let i = 0; i < 400 && game.state.status === 'running'; i++) step(game);
   assert.equal(game.state.status, 'won');
+});
+
+test('fast runner cannot tunnel through a narrow obstacle between fixed steps', () => {
+  const game = createGame({ speed: 7000, runnerX: 0, obstacleStartX: 84, obstacleGap: 1000, finishX: 1000 });
+  step(game);
+  assert.equal(game.state.status, 'running');
+  step(game);
+  assert.equal(game.state.status, 'dead');
+  assert.equal(game.state.deathReason, 'obstacle');
 });
 
 test('jump pressed shortly before landing is buffered', () => {

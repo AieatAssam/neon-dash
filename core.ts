@@ -15,11 +15,12 @@ export interface Obstacle {
   x: number; width: number; height: number; phase: Phase | null;
   kind?: 'spike' | 'gate'; cleared?: boolean;
 }
-export interface RunStats { jumps: number; switches: number; cleared: number; neutralCleared: number }
+export interface RunStats { jumps: number; switches: number; cleared: number; neutralCleared: number; orbs: number }
+export interface Collectible { x: number; y: number; radius: number }
 export interface Terrain { kind: 'gap' | 'platform'; x: number; width: number; height: number }
 export interface GameState {
   time: number; speed: number; level: number; stats: RunStats; distance: number; phase: Phase;
-  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[];
+  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[];
   status: 'running' | 'dead' | 'won'; deathReason: 'obstacle' | 'fall' | 'platform' | null;
   jumpHeld: boolean; jumpBuffer: number;
 }
@@ -81,6 +82,9 @@ function extendCourse(game: Game): void {
     else recipe.forEach((phase, i) => s.obstacles.push({
       x: game.nextCluster + i * 28, width: 26, height, phase,
     }));
+    // Bonus jumps sit in the clear runway after every cluster. They do not
+    // consume RNG, so adding rewards preserves the seeded hazard sequence.
+    s.collectibles.push({ x: game.nextCluster + 190, y: game.config.groundY - 70, radius: 10 });
     game.nextCluster += 360 + Math.floor(random(game) * 100);
   }
   // Keep the live obstacle array stable. This runs on every fixed simulation
@@ -99,6 +103,11 @@ function extendCourse(game: Game): void {
     if (terrain.x + terrain.width > s.distance - 100) s.terrain[write++] = terrain;
   }
   s.terrain.length = write;
+  write = 0;
+  for (const orb of s.collectibles) {
+    if (orb.x + orb.radius >= s.distance - 100) s.collectibles[write++] = orb;
+  }
+  s.collectibles.length = write;
 }
 
 function overlaps(a: Box, b: Box): boolean {
@@ -132,13 +141,14 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       time: 0,
       speed: config.speed,
       level: 1,
-      stats: { jumps: 0, switches: 0, cleared: 0, neutralCleared: 0 },
+      stats: { jumps: 0, switches: 0, cleared: 0, neutralCleared: 0, orbs: 0 },
       distance: 0,
       phase: 0,
       runner: { x: config.runnerX, y: config.groundY - config.runnerHeight, width: config.runnerWidth,
         height: config.runnerHeight, vy: 0, grounded: true },
       obstacles,
       terrain: [],
+      collectibles: [],
       status: "running",
       deathReason: null,
       jumpHeld: false,
@@ -170,6 +180,7 @@ export function step(game: Game, input: Input = {}): GameState {
   s.time += dt;
   s.speed = game.endless ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
   s.level = 1 + Math.floor(s.time / 20);
+  const previousWorldX = s.distance + s.runner.x;
   s.distance += s.speed * dt;
   if (game.endless) extendCourse(game);
   const previousBottom = s.runner.y + s.runner.height;
@@ -200,6 +211,13 @@ export function step(game: Game, input: Input = {}): GameState {
   if (s.runner.y > c.groundY + 100) { s.status = 'dead'; s.deathReason = 'fall'; return s; }
 
   const runnerBox = { x: s.distance + s.runner.x, y: s.runner.y, width: s.runner.width, height: s.runner.height };
+  // Sweep horizontally across this step so valid high-speed configurations
+  // cannot skip narrow hazards between two fixed simulation positions.
+  const collisionBox = {
+    ...runnerBox,
+    x: previousWorldX,
+    width: runnerBox.x + runnerBox.width - previousWorldX,
+  };
   for (const obstacle of s.obstacles) {
     if (!obstacle.cleared && obstacle.x + obstacle.width < runnerBox.x) {
       obstacle.cleared = true; s.stats.cleared++;
@@ -211,12 +229,21 @@ export function step(game: Game, input: Input = {}): GameState {
     const depth = Math.min(box.height, runnerBox.y + runnerBox.height - box.y);
     const halfWidth = box.width * Math.max(0, depth) / (2 * box.height);
     const slice = { x: box.x + box.width / 2 - halfWidth, y: box.y, width: 2 * halfWidth, height: box.height };
-    if (overlaps(runnerBox, obstacle.kind === 'gate' ? box : slice)) {
+    if (overlaps(collisionBox, obstacle.kind === 'gate' ? box : slice)) {
       s.status = "dead";
       s.deathReason = "obstacle";
       return s;
     }
   }
+  // Circle-to-box collection is phase independent and never changes movement.
+  let liveOrbs = 0;
+  for (const orb of s.collectibles) {
+    const dx = orb.x - Math.max(runnerBox.x, Math.min(orb.x, runnerBox.x + runnerBox.width));
+    const dy = orb.y - Math.max(runnerBox.y, Math.min(orb.y, runnerBox.y + runnerBox.height));
+    if (dx * dx + dy * dy <= orb.radius * orb.radius) s.stats.orbs++;
+    else s.collectibles[liveOrbs++] = orb;
+  }
+  s.collectibles.length = liveOrbs;
   if (s.distance + s.runner.x >= c.finishX) s.status = "won";
   return s;
 }

@@ -6,7 +6,8 @@ const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
 const surface = document.createElement('canvas');
 const ctx = surface.getContext('2d')!;
-let game: any = createGame({ seed: Math.floor(Math.random() * 0x100000000) });
+let runSeed = Math.floor(Math.random() * 0x100000000);
+let game: any = createGame({ seed: runSeed });
 let mode = 'ready';
 let attempt = 0;
 let progress = { bestDistance: 0, runs: 0, unlocked: [] };
@@ -24,6 +25,7 @@ let renderedMeters = -1;
 let renderedLevel = -1;
 let renderedPhase = -1;
 let renderedProgress = -1;
+let renderedOrbs = -1;
 let viewportMetrics = { width: 680, height: 480, dpr: 1 };
 const CYAN = '#37ffe7';
 const VIOLET = '#c778ff';
@@ -70,19 +72,20 @@ function playSfx(name) {
  sound.currentTime = 0;
  sound.play().catch(() => {});
 }
-function start() {
+function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
- game = createGame({ seed: Math.floor(Math.random() * 0x100000000) }); mode = 'running'; attempt++; accumulator = 0; rotation = 0;
+ if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
+ game = createGame({ seed: runSeed }); mode = 'running'; attempt++; accumulator = 0; rotation = 0;
  jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0;
  $('attempt').textContent = String(attempt).padStart(2, '0');
- $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('pauseBtn').style.display = 'block';
+ $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
  $('status').textContent = `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
  playMusic();
 }
 function pause() {
- if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('resumeBtn').focus(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; $('pauseOverlay').hidden = true; playMusic(); }
+ if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
 }
 function finish() {
  const distance = meters();
@@ -95,19 +98,22 @@ function finish() {
  mode = game.state.status;
  playSfx(mode === 'won' ? 'win' : 'death');
  music.pause();
- $('overlay').hidden = false; $('pauseBtn').style.display = 'none';
+ $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
  $('overlayKicker').textContent = mode === 'won' ? 'CIRCUIT COMPLETE' : `ATTEMPT ${String(attempt).padStart(2, '0')} · ${distance}m · LEVEL ${game.state.level || 1}`;
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
- $('overlayDescription').innerHTML = mode === 'won' ? 'Every jump. Every switch. You nailed it.<br>Ready for another perfect run?' : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED<br>New circuit. Keep your rhythm.`;
- $('playLabel').textContent = mode === 'won' ? 'PLAY AGAIN' : 'TRY AGAIN';
+ $('overlayDescription').innerHTML = mode === 'won' ? `Every jump. Every switch. You nailed it.<br>${game.state.stats.orbs} ORBS COLLECTED · Ready for another run?` : `GOLD IS ALWAYS SOLID · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
+ $('playLabel').textContent = 'RETRY SAME CIRCUIT';
+ $('freshBtn').hidden = false;
+ $('seedText').textContent = `CIRCUIT SEED · ${runSeed}`;
  $('overlayHint').innerHTML = 'or press <kbd>SPACE</kbd> to restart';
  $('status').textContent = mode === 'won' ? 'Level complete! Press Space to play again.' : `Run ended at ${distance} meters. Press Space to try again.`;
 }
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
-$('playBtn').addEventListener('click', start);
-$('restartBtn').addEventListener('click', start);
+$('playBtn').addEventListener('click', () => start(false));
+$('freshBtn').addEventListener('click', () => start(true));
+$('restartBtn').addEventListener('click', () => start(false));
 $('pauseBtn').addEventListener('click', pause);
 $('resumeBtn').addEventListener('click', pause);
 $('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpHeld = true; jump(); });
@@ -251,10 +257,19 @@ function render(time) {
   if (active) { ctx.shadowBlur = 0; ctx.strokeStyle = '#f2ffff'; ctx.lineWidth = .8; ctx.stroke(); ctx.fillStyle = '#edffff'; ctx.fillRect(x + obstacle.width / 2 - 1, c.groundY - obstacle.height + 6, 2, 8); }
   ctx.restore();
  }
+ for (const orb of s.collectibles) {
+  const x = orb.x - s.distance;
+  if (x < -orb.radius - 20 || x > width + orb.radius + 20) continue;
+  const bob = reducedMotion ? 0 : Math.sin(clock * 4 + orb.x * .02) * 3;
+  ctx.save(); ctx.translate(x, orb.y + bob); ctx.rotate(Math.PI / 4 + (reducedMotion ? 0 : Math.sin(clock * 2 + orb.x) * .12));
+  ctx.shadowColor = palette.gold; ctx.shadowBlur = 17 * pulse; ctx.fillStyle = '#ffe69a'; ctx.strokeStyle = palette.gold; ctx.lineWidth = 2;
+  ctx.fillRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3); ctx.strokeRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3);
+  ctx.shadowBlur = 0; ctx.fillStyle = '#fff9dc'; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
+ }
  const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<width){ctx.strokeStyle='#b9e786';ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#b9e786';ctx.font='9px sans-serif';ctx.fillText('FINISH',finishX-15,60);}
  const r=s.runner;
  if(mode==='running'){ctx.fillStyle=color;for(let i=1;i<8;i++){ctx.globalAlpha=.2*(1-i/8);const size=r.width*(1-i/11);ctx.fillRect(r.x-i*12,r.y+(r.height-size)/2,size,size);}ctx.globalAlpha=1;}
- if(!r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
+ if(!reducedMotion && !r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
  ctx.save();ctx.translate(r.x+r.width/2,r.y+r.height/2);ctx.rotate(rotation);
  ctx.shadowColor=color;ctx.shadowBlur=28*pulse;ctx.fillStyle=s.phase===0?'#138f99':'#8a35bd';ctx.strokeStyle=color;ctx.lineWidth=3;
  ctx.fillRect(-r.width/2,-r.height/2,r.width,r.height);ctx.strokeRect(-r.width/2,-r.height/2,r.width,r.height);
@@ -268,8 +283,8 @@ function render(time) {
   ctx.fillRect(x,y,i%5===0?3:1.5,i%5===0?3:1.5);
  }ctx.globalAlpha=1;
  const effectAge=(time-visualEvent.at)/1000;
- if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win'].includes(visualEvent.name)){
-  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:color;ctx.lineWidth=2;
+ if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win','orb'].includes(visualEvent.name)){
+  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?palette.gold:color;ctx.lineWidth=2;
   const cx=r.x+r.width/2,cy=r.y+r.height/2;
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
@@ -286,6 +301,7 @@ function render(time) {
   $('progressText').setAttribute('aria-label',`${currentMeters} meters. Level ${level}`);
   $('levelText').textContent=`LEVEL ${String(level).padStart(2,'0')}`;
  }
+ if (s.stats.orbs !== renderedOrbs) { renderedOrbs = s.stats.orbs; $('orbCount').textContent = String(renderedOrbs); }
  const phaseName=s.phase===0?'CYAN':'VIOLET';
  if (phaseButton.dataset.phase !== phaseName) {
   phaseButton.dataset.phase=phaseName;
@@ -295,7 +311,7 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs){visualEvent={name:'orb',at:performance.now()};haptic(18);}if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
  render(time);
 }
 

@@ -14,3 +14,8 @@ test('progress keeps records and unlocks without duplicating them', () => {
   assert.equal(second.runs, 2);
   assert.deepEqual(second.unlocked, ['distance-1000', 'jump-10', 'switch-10']);
 });
+
+test('collecting ten orbs earns the signal collector achievement', () => {
+  const run = { distance: 0, stats: { jumps: 0, switches: 0, neutralCleared: 0, orbs: 10 } };
+  assert.ok(evaluateAchievements(run).includes('orb-10'));
+});
