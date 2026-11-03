@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ART_PALETTES, contrastRatio, colorDifference } from '../src/art/palette.ts';
+import { ART_PALETTES, UI_CSS_COLORS, contrastRatio, colorDifference } from '../src/art/palette.ts';
 
 test('contrast utility uses linearized sRGB relative luminance', () => {
   assert.equal(contrastRatio('#000000', '#ffffff'), 21);
@@ -43,5 +44,14 @@ test('all visible gameplay contours meet their contrast targets on every scheme'
     for (const [token, minimum] of Object.entries(targets)) {
       assert.ok(contrastRatio(palette[token], surface) >= minimum, `${palette.name} ${token} on ${surface}`);
     }
+  }
+});
+
+
+test('stylesheet uses defined shared UI palette tokens', () => {
+  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i);
+  for (const [, token] of css.matchAll(/var\((--ui-[a-z0-9-]+)\)/g)) {
+    assert.ok(UI_CSS_COLORS[token], `missing ${token}`);
   }
 });

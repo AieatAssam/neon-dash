@@ -1,10 +1,12 @@
-import { ART_PALETTES, GAMEPLAY_COLORS } from './src/art/palette';
+import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
 import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
+
+for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
 
 const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;

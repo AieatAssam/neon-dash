@@ -96,3 +96,5 @@ Glow is a multiple of the on-screen cube size and never replaces the opaque cont
 | `blue` | `#347cff` | `#9161ff` | `#24b8ff` | Decorative architecture |
 | `runnerCyanFill` | `#138f99` | `#138f99` | `#138f99` | Cyan runner body |
 | `runnerVioletFill` | `#8a35bd` | `#8a35bd` | `#8a35bd` | Violet runner body |
+
+UI surfaces and typography use the `UI_COLORS` tokens in the same palette module. Their alpha variants are derived centrally as `--ui-*` CSS properties. The shared cyan, violet and white tokens match the gameplay palette. UI accents use blue `#537bff`, violet glow `#7c45ff`, pink glow `#ff58be` and reward gold `#ffc46a`; interface surfaces use ink `#070b19`, surface `#0a1635` and raised surface `#16214d`.
