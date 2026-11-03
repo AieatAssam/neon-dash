@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
+import { viewportWorldSize } from './viewport';
+import { BeatClock, beatEnvelope } from './rhythm';
 
 const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
@@ -55,6 +57,7 @@ function haptic(pattern) { if (vibrationEnabled && !reducedMotion && typeof navi
 const music = new Audio(new URL('./assets/space-city.mp3', import.meta.url).href);
 music.loop = true;
 music.volume = .35;
+const beatClock = new BeatClock();
 const soundEffects = {
  jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url).href),
  phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
@@ -101,8 +104,8 @@ function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
  game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
- renderDirty = true; lastFrameTime = 0;
- jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0;
+ renderDirty = true; lastFrameTime = 0; lastTime = 0;
+ jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
@@ -111,7 +114,7 @@ function start(newCircuit = false) {
 }
 function pause() {
  if (mode === 'running') { jumpHeld = false; lastFrameTime = 0; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastFrameTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastFrameTime = 0; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
 }
 function finish() {
  const distance = meters();
@@ -160,6 +163,7 @@ $('resumeBtn').addEventListener('click', pause);
 $('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpHeld = true; jump(); });
 phaseButton.addEventListener('click', e => { e.stopPropagation(); if (mode === 'running') phaseQueued = true; });
 $('soundBtn').addEventListener('click', () => {
+ if (audioEnabled && !music.paused) beatClock.sample(game.state.time, music.currentTime);
  audioEnabled = !audioEnabled;
  $('soundBtn').textContent = audioEnabled ? '♫' : '♪';
  $('soundBtn').setAttribute('aria-label', audioEnabled ? 'Mute sound' : 'Enable sound');
@@ -194,7 +198,8 @@ function render(time) {
   renderedPhase = s.phase;
  }
  const clock = reducedMotion ? 0 : time * .001;
- const pulse = reducedMotion ? 1 : .88 + Math.sin(clock * 3) * .12;
+ const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
+ const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
  const palettes = [
   { top: '#100728', horizon: '#173855', floor: '#120b30', pink: '#ff3ca6', gold: '#ffbd55', blue: '#347cff' },
   { top: '#150827', horizon: '#462252', floor: '#180b2d', pink: '#ff5a79', gold: '#ffd358', blue: '#9161ff' },
@@ -254,7 +259,7 @@ function render(time) {
  for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.beginPath(); ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); ctx.stroke(); }
  for (let y = c.groundY + 18; y < height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
  // A hot white core and wide bloom make the runway read as emitted light.
- ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 23; ctx.strokeStyle = color; ctx.lineWidth = 3;
+ ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 23 * pulse; ctx.strokeStyle = color; ctx.lineWidth = 3;
  ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(width, c.groundY + .5); ctx.stroke();
  ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = '#d9fff8'; ctx.stroke();
  ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(width, c.groundY + 7); ctx.stroke(); ctx.restore();
@@ -366,9 +371,16 @@ class RunScene extends Phaser.Scene {
  }
  update(time: number) {
   const rect = canvas.getBoundingClientRect();
+  // A hidden or collapsed canvas has no usable coordinate system. Keep the
+  // previous frame until it becomes visible again.
+  if (rect.width <= 0 || rect.height <= 0) { lastFrameTime = 0; lastTime = 0; return; }
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * adaptiveDpr;
-  const scale = Math.min(rect.width / 680, rect.height / 480);
-  viewportMetrics = { width: rect.width / scale, height: rect.height / scale, dpr };
+  const worldSize = viewportWorldSize(rect.width, rect.height);
+  const scale = worldSize.scale;
+  const nextWidth = worldSize.width;
+  const nextHeight = worldSize.height;
+  if (viewportMetrics.width !== nextWidth || viewportMetrics.height !== nextHeight) renderDirty = true;
+  viewportMetrics = { width: nextWidth, height: nextHeight, dpr };
   const width = Math.max(1, Math.round(rect.width * dpr));
   const height = Math.max(1, Math.round(rect.height * dpr));
   if (this.texture.width !== width || this.texture.height !== height) {
