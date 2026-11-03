@@ -1,23 +1,17 @@
 <!doctype html>
 <html lang="en">
 <head>
-<link rel="icon" href="data:,">
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080c18"><meta name="description" content="A neon rhythm platformer. Jump, survive, and find your flow.">
-<title>Neon Dash — Find your flow</title>
-<link rel="stylesheet" href="style.css">
+<meta name="theme-color" content="#070b19"><meta name="description" content="Jump. Switch. Survive. A neon arcade platformer.">
+<link rel="icon" href="data:,"><title>Neon Dash</title><link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main class="shell">
-<header class="topbar"><a class="brand" href="./" aria-label="Neon Dash home"><span class="brand-icon">◈</span> NEON<span>DASH</span><small>THE RHYTHM RUNNER</small></a><div class="header-right"><span class="system"><i></i> SYSTEM ONLINE</span><button class="icon-button" id="soundBtn" aria-label="Enable sound" title="Toggle sound">♪</button></div></header>
-<section class="game-heading"><div><div class="eyebrow"><span></span> PRECISION. RHYTHM. REPEAT.</div><h1>Find your <em>flow.</em></h1><p>One button. Endless possibilities. Make every jump count.</p></div><div class="session-tag"><span class="pulse-dot"></span> ARCADE MODE <span class="tag-number">01</span></div></section>
-<section class="game-card" aria-label="Neon Dash game">
-<div class="game-toolbar"><div class="level-label"><span class="level-icon">▥</span><div><span class="tiny-label">CURRENT LEVEL</span><strong>Neon Circuit <span>01</span></strong></div></div><div class="toolbar-stats"><div><span class="tiny-label">ATTEMPT</span><strong id="attempt">01</strong></div><span class="stat-divider"></span><div><span class="tiny-label">BEST</span><strong class="cyan" id="best">0<span>%</span></strong></div></div></div>
-<div class="viewport" id="viewport"><canvas id="game" aria-label="Neon Dash playfield. Press Space, Arrow Up, or tap to jump."></canvas><div class="progress-track"><div id="progressFill"></div></div><span class="progress-number" id="progressText">0%</span><div class="game-overlay" id="overlay"><div class="overlay-symbol">◈</div><span class="overlay-kicker" id="overlayKicker">YOUR NEXT CHALLENGE</span><h2 id="overlayTitle">Ready to dash?</h2><p id="overlayDescription">Feel the rhythm. Clear the obstacles.<br>Keep moving forward.</p><button class="primary-button" id="playBtn"><span id="playLabel">LET’S PLAY</span><span>↗</span></button><span class="overlay-hint" id="overlayHint">or press <kbd>SPACE</kbd> to start</span></div><div class="pause-overlay" id="pauseOverlay" hidden><h2>Paused</h2><p>Take a breath. Find your rhythm.</p><button class="primary-button" id="resumeBtn">RESUME <span>↗</span></button></div><button class="pause-button" id="pauseBtn" aria-label="Pause game" title="Pause (P)">Ⅱ</button><div class="canvas-corner">ND—01 <span> / LIVE RUN</span></div></div>
-<div class="game-bottom"><div class="control-hint"><kbd>SPACE</kbd><span>or</span><kbd>↑</kbd><span>to jump</span><i></i><span class="tap-hint">Tap anywhere to jump</span></div><button class="text-button" id="restartBtn"><span>↻</span> RESTART <kbd>R</kbd></button></div>
-</section>
-<section class="info-grid" aria-label="How to play"><article><span class="info-icon">⌁</span><div><h3>Simple to play</h3><p>Press, click, or tap to jump.<br>Hold to keep the momentum.</p></div><span class="info-number">01</span></article><article><span class="info-icon violet">△</span><div><h3>Hard to master</h3><p>Dodge the spikes. Nail the timing.<br>Every attempt gets you closer.</p></div><span class="info-number">02</span></article><article><span class="info-icon lime">⚑</span><div><h3>Beat your best</h3><p>Push a little further each run.<br>Your progress is saved locally.</p></div><span class="info-number">03</span></article></section>
-<footer><span>BUILT FOR THE <span class="cyan">ONE MORE TRY.</span></span><span><i></i> NO DOWNLOADS. JUST DASH.</span></footer>
+<main class="viewport" id="viewport" aria-label="Neon Dash game">
+<canvas id="game" aria-label="Playfield. Space or tap to jump. X or Shift to switch color."></canvas>
+<div class="hud"><div class="run-stats"><span>ATTEMPT <b id="attempt">01</b></span><span>BEST <b id="best">0<span>m</span></b></span></div><div class="progress"><span id="levelText">LEVEL 01</span><div class="progress-track"><div id="progressFill"></div></div><span id="progressText">0m</span></div><div class="hud-actions"><button class="icon-button" id="soundBtn" aria-label="Enable sound" aria-pressed="false" title="Toggle sound">♪</button><button class="icon-button" id="pauseBtn" aria-label="Pause game" title="Pause (P)">Ⅱ</button></div></div>
+<div class="game-overlay" id="overlay"><div class="menu"><span class="overlay-kicker" id="overlayKicker">ENDLESS / NEW CIRCUIT EVERY RUN</span><h1 id="overlayTitle">NEON<span>DASH</span></h1><p id="overlayDescription">Jump the spikes. Switch your color.<br>Gold is always solid.</p><button class="primary-button" id="playBtn"><span id="playLabel">PLAY</span><span aria-hidden="true">▶</span></button><span class="overlay-hint" id="overlayHint">press <kbd>SPACE</kbd> to start</span><div class="achievement-summary"><span id="achievementUnlock"></span><p id="achievementGoal"></p></div><div class="menu-controls"><span><kbd>SPACE / ↑</kbd> JUMP</span><span><kbd>X / SHIFT</kbd> SWITCH</span></div></div></div>
+<div class="pause-overlay" id="pauseOverlay" hidden><div class="menu"><span class="overlay-kicker">TAKE A BREATH</span><h2>PAUSED</h2><button class="primary-button" id="resumeBtn">RESUME <span aria-hidden="true">▶</span></button><button class="text-button" id="restartBtn">↻ RESTART</button><div class="menu-controls"><span><kbd>SPACE / ↑</kbd> JUMP</span><span><kbd>X / SHIFT</kbd> SWITCH</span></div><small class="audio-credit">SPACE CITY · MINTODOG / SFX · CRAZYDUCKGAMES · CC0</small></div></div>
+<button id="jumpBtn" class="jump-button" aria-label="Jump" hidden>↑<span>JUMP</span></button>
 <div class="sr-only" id="status" aria-live="polite"></div>
 </main>
 <script type="module" src="main.js"></script>

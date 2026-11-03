@@ -75,33 +75,50 @@ test("spike collision respects the triangular tip instead of its empty corners",
   assert.equal(game.state.status, "running");
 });
 
-test("authored circuit grows through three varied sections", () => {
-  const game = createGame();
-  assert.ok(game.config.finishX / game.config.speed >= 30);
-  const spikes = game.state.obstacles;
-  assert.ok(spikes.length >= 30);
-  assert.ok(new Set(spikes.map(s => s.height)).size >= 3);
-  assert.ok(spikes.some((s, i) => i && s.x - spikes[i - 1].x < 50));
+test("endless course is seeded and varies between seeds", () => {
+  assert.deepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 7 }).state.obstacles);
+  assert.notDeepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 8 }).state.obstacles);
+  assert.ok(createGame().state.obstacles.some(o => o.phase === null));
 });
 
-test("authored circuit can be completed with deliberate jumps and phase changes", () => {
-  const game = createGame();
-  let jumps = 0;
-  let switches = 0;
-  let lastSwitch = 0;
-  for (let frame = 0; frame < 6000 && game.state.status === "running"; frame++) {
-    const s = game.state;
-    const runnerX = s.distance + s.runner.x;
-    const next = s.obstacles.find(o => o.x + o.width > runnerX && o.phase === s.phase);
-    const jump = Boolean(next && next.x - runnerX < 45 && s.runner.grounded);
-    // Change phase in the open runway between each musical phrase.
-    const runway = s.obstacles.every(o => o.x + o.width < runnerX - 30 || o.x > runnerX + 200);
-    const togglePhase = frame - lastSwitch >= 400 && runway;
-    if (jump) jumps++;
-    if (togglePhase) { switches++; lastSwitch = frame; }
-    step(game, { jump, togglePhase });
+test("endless ramp is capped and obstacle memory stays bounded", () => {
+  const game = createGame({ seed: 7 });
+  for (let i = 0; i < 120 * 240; i++) {
+    game.state.runner.y = -10000;
+    game.state.runner.vy = 0;
+    step(game);
   }
-  assert.equal(game.state.status, "won");
-  assert.ok(jumps >= 10);
-  assert.ok(switches >= 5);
+  assert.equal(game.state.status, "running");
+  assert.equal(game.state.speed, 340);
+  assert.ok(game.state.level > 1);
+  assert.ok(game.state.obstacles.length < 35);
+  assert.ok(game.state.stats.cleared > 100);
+});
+
+test("neutral spikes cannot be bypassed with phase", () => {
+  for (const phase of [0, 1]) {
+    const game = createGame({ speed: 0, obstacleStartX: 0, runnerX: 0, finishX: 100 });
+    game.state.obstacles[0].phase = null;
+    game.state.phase = phase;
+    step(game);
+    assert.equal(game.state.status, "dead");
+  }
+});
+
+test("generated recipes are jumpable at every ramp speed with deliberate timing", () => {
+  for (const speed of [240, 280, 340]) {
+    const game = createGame({ seed: 17 });
+    // Freeze ramp at each tested speed while retaining generation.
+    game.config.speed = speed;
+    game.config.maxSpeed = speed;
+    for (let i = 0; i < 120 * 100 && game.state.status === "running"; i++) {
+      const s = game.state;
+      const x = s.distance + s.runner.x;
+      const next = s.obstacles.find(o => o.x + o.width > x - 3);
+      const jump = Boolean(next && next.x - x < speed * .19 && s.runner.grounded);
+      step(game, { jump });
+    }
+    assert.equal(game.state.status, "running", `speed ${speed}, distance ${game.state.distance}`);
+    assert.ok(game.state.stats.jumps > 30);
+  }
 });

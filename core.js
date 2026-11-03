@@ -15,31 +15,41 @@ export const DEFAULT_CONFIG = Object.freeze({
   obstacleHeight: 42,
   obstacleGap: 240,
   obstacleStartX: 460,
-  finishX: 9000,
+  finishX: Infinity,
+  maxSpeed: 340,
+  seed: 1,
   fixedStep: 1 / 120,
 });
 
-// Each phrase has a readable runway, then a compact jump pattern. The final
-// section mixes phases within clusters so staying in one color still needs jumps.
-export const LEVEL_SECTIONS = Object.freeze([
-  { name: "FIND THE BEAT", start: 0, end: 2800 },
-  { name: "CROSS THE SIGNAL", start: 2800, end: 5800 },
-  { name: "NEON OVERDRIVE", start: 5800, end: 9000 },
+// Compact clusters fit under one jump at the slowest speed. The runway
+// between clusters exceeds a full jump plus a generous reaction interval.
+export const CHALLENGE_RECIPES = Object.freeze([
+  Object.freeze([null]), Object.freeze([0]), Object.freeze([1]),
+  Object.freeze([null, null]), Object.freeze([0, 1]),
+  Object.freeze([1, null]), Object.freeze([null, 0, 1]),
 ]);
+export const LEVEL_SECTIONS = Object.freeze([]);
 
-function authoredObstacles() {
-  const phrases = [
-    [560, [0], 34], [960, [1], 34], [1360, [0, 0], 38],
-    [1800, [1], 42], [2200, [0, 1], 38], [2600, [1, 1], 42],
-    [3100, [0, 1], 44], [3500, [1, 0], 42], [3900, [0, 0, 1], 38],
-    [4340, [1, 1], 50], [4780, [0, 1, 0], 42], [5260, [1, 0], 46],
-    [6000, [0, 1, 0], 46], [6460, [1, 0, 1], 42],
-    [6920, [0, 0, 1], 50], [7380, [1, 0, 1], 46],
-    [7840, [0, 1, 0], 50], [8300, [1, 0, 1], 46],
-  ];
-  return phrases.flatMap(([x, phases, height]) => phases.map((phase, i) => ({
-    x: x + i * 30, width: 28, height, phase,
-  })));
+function random(game) {
+  game.randomState = (game.randomState + 0x6D2B79F5) >>> 0;
+  let n = game.randomState;
+  n = Math.imul(n ^ n >>> 15, n | 1);
+  n ^= n + Math.imul(n ^ n >>> 7, n | 61);
+  return ((n ^ n >>> 14) >>> 0) / 4294967296;
+}
+
+function extendCourse(game) {
+  const s = game.state;
+  while (game.nextCluster < s.distance + 2400) {
+    const tier = Math.min(6, 2 + Math.floor(s.time / 15));
+    const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
+    const height = 34 + Math.floor(random(game) * 4) * 4;
+    recipe.forEach((phase, i) => s.obstacles.push({
+      x: game.nextCluster + i * 28, width: 26, height, phase,
+    }));
+    game.nextCluster += 360 + Math.floor(random(game) * 100);
+  }
+  s.obstacles = s.obstacles.filter(o => o.x + o.width > s.distance - 100);
 }
 
 function overlaps(a, b) {
@@ -48,7 +58,8 @@ function overlaps(a, b) {
 }
 
 export function createGame(overrides = {}) {
-  const config = { ...DEFAULT_CONFIG, ...overrides };
+  const layoutOverride = ["obstacleStartX", "obstacleGap", "obstacleWidth", "obstacleHeight"].some(key => Object.hasOwn(overrides, key));
+  const config = { ...DEFAULT_CONFIG, ...(layoutOverride ? { finishX: 9000 } : {}), ...overrides };
   if (!(config.fixedStep > 0) || !(config.speed >= 0) || !(config.finishX > config.runnerX)) {
     throw new RangeError("Invalid simulation configuration");
   }
@@ -59,14 +70,20 @@ export function createGame(overrides = {}) {
     width: config.obstacleWidth,
     height: config.obstacleHeight,
     phase: i % 2,
-  })) : authoredObstacles();
+  })) : [];
 
-  return {
+  const game = {
     config,
+    endless: !customLayout,
+    randomState: Number(config.seed) >>> 0,
+    nextCluster: 560,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     state: {
       time: 0,
+      speed: config.speed,
+      level: 1,
+      stats: { jumps: 0, switches: 0, cleared: 0, neutralCleared: 0 },
       distance: 0,
       phase: 0,
       runner: { x: config.runnerX, y: config.groundY - config.runnerHeight, width: config.runnerWidth,
@@ -77,6 +94,8 @@ export function createGame(overrides = {}) {
       jumpHeld: false,
     },
   };
+  if (game.endless) extendCourse(game);
+  return game;
 }
 
 /** Advance exactly one fixed simulation step. Inputs are edge-triggered for this step. */
@@ -85,8 +104,9 @@ export function step(game, input = {}) {
   const c = game.config;
   if (s.status !== "running") return s;
 
-  if (input.togglePhase) s.phase = 1 - s.phase;
+  if (input.togglePhase) { s.phase = 1 - s.phase; s.stats.switches++; }
   if (input.jump && !s.jumpHeld && s.runner.grounded) {
+    s.stats.jumps++;
     s.runner.vy = c.jumpVelocity;
     s.runner.grounded = false;
   }
@@ -94,7 +114,10 @@ export function step(game, input = {}) {
 
   const dt = c.fixedStep;
   s.time += dt;
-  s.distance += c.speed * dt;
+  s.speed = game.endless ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
+  s.level = 1 + Math.floor(s.time / 20);
+  s.distance += s.speed * dt;
+  if (game.endless) extendCourse(game);
   s.runner.vy += c.gravity * dt;
   s.runner.y += s.runner.vy * dt;
   const floor = c.groundY - s.runner.height;
@@ -106,7 +129,11 @@ export function step(game, input = {}) {
 
   const runnerBox = { x: s.distance + s.runner.x, y: s.runner.y, width: s.runner.width, height: s.runner.height };
   for (const obstacle of s.obstacles) {
-    if (obstacle.phase !== s.phase) continue;
+    if (!obstacle.cleared && obstacle.x + obstacle.width < runnerBox.x) {
+      obstacle.cleared = true; s.stats.cleared++;
+      if (obstacle.phase === null) s.stats.neutralCleared++;
+    }
+    if (obstacle.phase !== null && obstacle.phase !== s.phase) continue;
     const box = { x: obstacle.x, y: c.groundY - obstacle.height, width: obstacle.width, height: obstacle.height };
     // At the bottom edge of the runner the triangle is widest.
     const depth = Math.min(box.height, runnerBox.y + runnerBox.height - box.y);
