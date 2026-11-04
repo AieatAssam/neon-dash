@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RunnerTrail, RUNNER_FACE } from '../runner-visuals.ts';
+import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION } from '../runner-visuals.ts';
 
 test('trail interpolates historical jump height and keeps world positions', () => {
  const trail = new RunnerTrail();
@@ -16,13 +16,22 @@ test('trail interpolates historical jump height and keeps world positions', () =
 test('history stays bounded and resets across retries and checkpoint rewinds', () => {
  const trail = new RunnerTrail();
  for (let i = 0; i < 1200; i++) trail.record(i / 120, i, i);
- assert.ok(trail.samples.length < 40);
+ assert.ok(trail.samples.length < 70);
  trail.reset();
  assert.equal(trail.at(9), undefined);
  trail.record(5, 100, 200);
  trail.record(2, 20, 30);
  assert.equal(trail.samples.length, 1);
  assert.equal(trail.at(1), undefined);
+});
+
+test('history retains the full visible trail interval for interpolation', () => {
+ const trail = new RunnerTrail();
+ for (let i = 0; i <= 100; i++) trail.record(i / 120, i, 200 - i);
+ const now = 100 / 120;
+ assert.ok(trail.samples[0].time <= now - RUNNER_TRAIL_DURATION);
+ assert.ok(trail.at(now - RUNNER_TRAIL_DURATION));
+ assert.ok(trail.samples.length < 80);
 });
 
 test('face eyes mirror each other and mouth is centered', () => {

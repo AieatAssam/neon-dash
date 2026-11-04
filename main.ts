@@ -1,6 +1,6 @@
 import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
-import { RunnerTrail, RUNNER_FACE } from './runner-visuals';
+import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION, RUNNER_TRAIL_SEGMENTS } from './runner-visuals';
 import { challengeProgress, createGame, step } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
@@ -447,7 +447,21 @@ function render(time) {
  }
  const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<worldRight){ctx.strokeStyle=GAMEPLAY_COLORS.platform;ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=GAMEPLAY_COLORS.platform;ctx.font=`${Math.max(9, 12 * width / (canvas.clientWidth || 1))}px sans-serif`;ctx.fillText('FINISH',finishX-15,60);}
  const r=s.runner;
- if(mode==='running'){ctx.fillStyle=color;for(let i=7;i>=1;i--){const sample=runnerTrail.at(s.time-i*.03);if(!sample)continue;ctx.globalAlpha=.2*(1-i/8);const size=r.width*(1-i/11);ctx.fillRect(sample.x-s.distance-size/2,sample.y-size/2,size,size);}ctx.globalAlpha=1;}
+ if(mode==='running'){
+  // Draw newest-to-oldest layers from the same fixed-step positions used by simulation.
+  // Overlapping tapered squares create a continuous ribbon without per-frame allocations.
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  for(let i=RUNNER_TRAIL_SEGMENTS;i>=1;i--){
+   const age=RUNNER_TRAIL_DURATION*i/RUNNER_TRAIL_SEGMENTS;
+   const sample=runnerTrail.at(s.time-age);if(!sample)continue;
+   const fade=1-i/(RUNNER_TRAIL_SEGMENTS+1), size=r.width*(.42+.58*fade);
+   ctx.globalAlpha=(reducedMotion?.1:.32)*fade;
+   ctx.fillStyle=color;
+   ctx.fillRect(sample.x-s.distance-size/2,sample.y-size/2,size,size);
+   if(!reducedMotion && i%3===1){ctx.globalAlpha=.12*fade;ctx.fillRect(sample.x-s.distance-size*.28,sample.y-size*.28,size*.56,size*.56);}
+  }
+  ctx.restore();
+ }
  if(!reducedMotion && !r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
  ctx.save();ctx.translate(r.x+r.width/2,r.y+r.height/2);ctx.rotate(rotation);
  const runnerFill=s.phase===0?GAMEPLAY_COLORS.runnerCyanFill:GAMEPLAY_COLORS.runnerVioletFill;

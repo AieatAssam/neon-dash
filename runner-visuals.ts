@@ -1,4 +1,6 @@
 export type TrailSample = { time: number; x: number; y: number };
+export const RUNNER_TRAIL_DURATION = .48;
+export const RUNNER_TRAIL_SEGMENTS = 16;
 
 // Positions stay in world space: the renderer applies the current scroll offset.
 export class RunnerTrail {
@@ -8,7 +10,7 @@ export class RunnerTrail {
   const previous = this.samples.at(-1);
   if (previous && time <= previous.time) this.reset();
   this.samples.push({ time, x, y });
-  while (this.samples.length > 2 && this.samples[1].time < time - .3) this.samples.shift();
+  while (this.samples.length > 2 && this.samples[1].time < time - RUNNER_TRAIL_DURATION) this.samples.shift();
  }
  at(time: number): TrailSample | undefined {
   if (!this.samples.length || time < this.samples[0].time) return;
