@@ -168,3 +168,24 @@ test('endless practice can return to mode selection without saving progress', as
   await page.locator('#playBtn').click();
   await expect(page.locator('#practiceBadge')).toBeHidden();
 });
+
+test('short narrow touch practice controls stay clear of jump and phase buttons', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 390 }, hasTouch: true, isMobile: true });
+  try {
+    const page = await context.newPage();
+    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+    await page.locator('#practiceMode').check();
+    await page.locator('#playBtn').click();
+    const boxes = await page.evaluate(() => ['#phaseBtn', '#practiceControls', '#jumpBtn'].map(selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { selector, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    }));
+    for (let i = 0; i < boxes.length; i++) for (let j = 0; j < i; j++) {
+      const a = boxes[i], b = boxes[j];
+      expect(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top,
+        `${a.selector} overlaps ${b.selector}`).toBeTruthy();
+    }
+  } finally {
+    await context.close();
+  }
+});

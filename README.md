@@ -13,6 +13,8 @@ Neon Dash is a full-screen arcade runner about timing jumps and switching phases
 
 Sound is optional. Supported devices can also provide short haptic feedback; sound and vibration are controlled separately. Records and achievements stay in local browser storage.
 
+Choose **Practice mode** before starting to learn a circuit. During a run, add checkpoints with **+ Checkpoint** and remove the latest with **Undo**. After a crash, you return to the latest checkpoint (or the start if there isn't one). Practice runs don't update records or achievements. Pause and choose **Mode Selection** to leave practice.
+
 ## Run locally
 
 Install dependencies with `npm ci`, then run `npm run dev` and open the local address printed by Vite. `npm run build` type-checks and creates the production site in `dist/`; `npm run preview` serves that build locally. No backend is required. The GitHub Actions workflow deploys `dist/` to GitHub Pages.
