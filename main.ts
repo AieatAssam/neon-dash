@@ -52,6 +52,8 @@ let progress = { bestDistance: 0, challengeBest: 0, challengeWins: 0, runs: 0, u
 try { const saved = JSON.parse(localStorage.getItem('neon-dash-progress')); if (saved && typeof saved === 'object') progress = { ...progress, ...saved, unlocked: Array.isArray(saved.unlocked) ? saved.unlocked : [] }; } catch {}
 let best = Math.floor((Number(progress.bestDistance) || 0) / 10);
 let jumpHeld = false;
+const jumpPointerIds = new Set<number>();
+let keyboardJumpHeld = false;
 let jumpQueued = false;
 let phaseQueued = false;
 let accumulator = 0;
@@ -155,13 +157,17 @@ function updatePracticeControls() {
  $('checkpointCount').textContent = `${checkpoints.length} checkpoint${checkpoints.length === 1 ? '' : 's'}`;
  $('removeCheckpointBtn').disabled = checkpoints.length === 0;
 }
-function start(newCircuit = false) {
+function clearJumpInput() {
+ jumpPointerIds.clear(); keyboardJumpHeld = false; jumpHeld = false;
+}
+function start(newCircuit = false, preserveJumpInput = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  activePractice = $('practiceMode').checked; checkpoints = [];
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
  game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
  renderDirty = true; lastTime = 0;
- jumpHeld = false; jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
+ if (preserveJumpInput) jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; else clearJumpInput();
+ jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
@@ -170,7 +176,7 @@ function start(newCircuit = false) {
  playMusic();
 }
 function pause() {
- if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); updatePracticeControls(); }
+ if (mode === 'running') { clearJumpInput(); phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); updatePracticeControls(); }
  else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); updatePracticeControls(); playMusic(); }
 }
 function finish() {
@@ -204,12 +210,13 @@ if (import.meta.env.DEV) {
  (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
  (window as any).__setBackdropDistance = (distance: number) => { game.state.distance = distance; renderDirty = true; };
  (window as any).__setTestTerrain = (terrain: import('./core').Terrain[]) => { game.state.terrain = terrain; renderDirty = true; };
+ (window as any).__touchTestState = () => ({ phase: game.state.phase, jumps: game.state.stats.jumps, runnerY: game.state.runner.y, jumpHeld });
 }
 function meters() { return Math.floor(game.state.distance / 10); }
-function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
+function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(false, true); if (mode === 'running') jumpQueued = true; }
 function showTitle() {
  mode = 'ready'; activePractice = false; checkpoints = []; accumulator = 0; lastTime = 0;
- jumpHeld = false; jumpQueued = false; phaseQueued = false; music.pause();
+ clearJumpInput(); jumpQueued = false; phaseQueued = false; music.pause();
  $('overlay').hidden = false; $('pauseOverlay').hidden = true; $('pauseBtn').style.display = 'none';
  $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; updatePracticeControls();
@@ -243,7 +250,7 @@ function practiceRespawn() {
  const restored = checkpoints.length ? restoreCheckpoint(checkpoints[checkpoints.length - 1]) : null;
  game = restored || createGame({ seed: runSeed, mode: selectedMode });
  attempt++; $('attempt').textContent = String(attempt).padStart(2, '0');
- accumulator = 0; lastTime = 0; jumpHeld = false; jumpQueued = false; phaseQueued = false; rotation = 0;
+ accumulator = 0; lastTime = 0; clearJumpInput(); jumpQueued = false; phaseQueued = false; rotation = 0;
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; renderedOrbs = -1; renderDirty = true;
  beatClock.reset(); syncMusic(true);
  $('status').textContent = restored ? `Attempt ${attempt}. Returned to checkpoint.` : `Attempt ${attempt}. Returned to start.`;
@@ -253,7 +260,7 @@ $('freshBtn').addEventListener('click', () => start(true));
 $('restartBtn').addEventListener('click', () => start(false));
 $('pauseBtn').addEventListener('click', pause);
 $('resumeBtn').addEventListener('click', pause);
-$('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpHeld = true; jump(); });
+ $('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpPointerIds.add(e.pointerId); jumpHeld = true; jump(); });
 phaseButton.addEventListener('click', e => { e.stopPropagation(); if (mode === 'running') phaseQueued = true; });
 $('soundBtn').addEventListener('click', () => {
  if (audioEnabled && !music.paused) beatClock.sample(game.state.time, music.currentTime);
@@ -267,16 +274,16 @@ window.addEventListener('keydown', e => {
  if (['Space', 'ArrowUp', 'KeyW', 'KeyX', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape', 'KeyR'].includes(e.code)) {
   if ((e.target instanceof HTMLButtonElement && e.code === 'Space') || e.target instanceof HTMLInputElement) return;
   e.preventDefault(); if (e.repeat) return;
-  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { jumpHeld = true; jump(); }
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyboardJumpHeld = true; jumpHeld = true; jump(); }
   else if (['KeyX','ShiftLeft','ShiftRight'].includes(e.code)) { if (mode === 'running') phaseQueued = true; }
   else if (e.code === 'KeyR') start(); else pause();
  }
 });
-window.addEventListener('keyup', e => { if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) jumpHeld = false; });
-canvas.addEventListener('pointerdown', e => { e.preventDefault(); jumpHeld = true; jump(); });
-window.addEventListener('pointerup', () => { jumpHeld = false; });
-window.addEventListener('pointercancel', () => { jumpHeld = false; });
-window.addEventListener('blur', () => { jumpHeld = false; if (mode === 'running') pause(); });
+window.addEventListener('keyup', e => { if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyboardJumpHeld = false; jumpHeld = jumpPointerIds.size > 0; } });
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); jumpPointerIds.add(e.pointerId); jumpHeld = true; jump(); });
+window.addEventListener('pointerup', e => { jumpPointerIds.delete(e.pointerId); jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; });
+window.addEventListener('pointercancel', e => { jumpPointerIds.delete(e.pointerId); jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; });
+window.addEventListener('blur', () => { jumpPointerIds.clear(); keyboardJumpHeld = false; jumpHeld = false; if (mode === 'running') pause(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'running') pause(); });
 
 function render(time) {
