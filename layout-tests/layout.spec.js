@@ -3,6 +3,41 @@ import { test, expect } from '@playwright/test';
 const sizes = [[360, 640], [390, 844], [430, 932], [844, 390], [932, 430], [1280, 800]];
 const states = ['title', 'play', 'pause', 'game over', 'complete'];
 
+test('title explains the shield pickup and its limits', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#overlayDescription')).toContainText('Collect cyan shields');
+  await expect(page.locator('#overlayDescription')).toContainText('Gaps and falls still hurt');
+});
+
+for (const [width, height] of sizes) {
+  test(`${width}x${height} charged shield HUD in practice`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+    await page.locator('#practiceMode').check();
+    await page.locator('#playBtn').click();
+    await page.evaluate(() => window.__setShieldCharged(true));
+    await expect(page.locator('#shieldIndicator')).toBeVisible();
+    const layout = await page.evaluate(() => ['.run-stats', '.progress', '.hud-actions', '#shieldIndicator'].map(selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { selector, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+    }));
+    if (width === 360 && height === 640) await page.screenshot({ path: '/tmp/shield-hud-360x640.png' });
+    if (width === 844 && height === 390) await page.screenshot({ path: '/tmp/shield-hud-844x390.png' });
+    for (const item of layout) {
+      expect(item.x, item.selector).toBeGreaterThanOrEqual(0);
+      expect(item.y, item.selector).toBeGreaterThanOrEqual(0);
+      expect(item.right, item.selector).toBeLessThanOrEqual(width + .5);
+      expect(item.bottom, item.selector).toBeLessThanOrEqual(height + .5);
+    }
+    for (let i = 0; i < 3; i++) for (let j = 0; j < i; j++) {
+      const a = layout[i], b = layout[j];
+      expect(a.right <= b.x || b.right <= a.x || a.bottom <= b.y || b.bottom <= a.y,
+        `${a.selector} overlaps ${b.selector}`).toBeTruthy();
+    }
+  });
+}
+
 for (const [width, height] of sizes) {
   test(`${width}x${height} all states`, async ({ page }) => {
       await page.setViewportSize({ width, height });

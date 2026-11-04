@@ -20,7 +20,8 @@ function validGame(game: Game): boolean {
       !Number.isInteger(game.phraseIndex) || game.phraseIndex < 0 || game.phraseIndex >= game.phrasePattern.length ||
       !s.runner || !s.stats || !game.pendingInput || ![0, 1].includes(s.phase) ||
       s.time < 0 || s.distance < 0 || s.deathReason !== null ||
-      !Array.isArray(s.obstacles) || !Array.isArray(s.terrain) || !Array.isArray(s.collectibles)) return false;
+      !Array.isArray(s.obstacles) || !Array.isArray(s.terrain) || !Array.isArray(s.collectibles) ||
+      !Array.isArray(s.shieldPickups) || !s.powerUps || ![0, 1].includes(s.powerUps.shieldCharges)) return false;
   // Reject corrupt numeric values without JSON serialization (endless finish is Infinity).
   const finiteTree = (value: unknown, key = ''): boolean => {
     if (typeof value === 'number') return Number.isFinite(value) || (key === 'finishX' && value === Infinity);

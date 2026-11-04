@@ -10,6 +10,8 @@ import { GlowCache, glowRasterMetrics } from './glow-cache';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
 import { createCheckpoint, restoreCheckpoint, type PracticeCheckpoint } from './practice';
 import { scrollingTiles, blendHex } from './src/art/scrolling-background';
+import { drawShieldMark, SHIELD_CYAN } from './powerup-visuals';
+import { collectShield } from './powerups';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
 
@@ -83,7 +85,7 @@ const startHint = touchControls ? 'Tap PLAY to start' : 'press <kbd>SPACE</kbd> 
 const retryHint = touchControls ? 'Tap to retry' : 'or press <kbd>SPACE</kbd> to restart';
 document.querySelectorAll('.menu-controls').forEach(el => { if (touchControls) el.innerHTML = '<span>Tap to jump</span><span>Tap the colour button to switch</span>'; });
 $('overlayHint').innerHTML = startHint;
-$('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite colour for gates. Pink spikes always hurt.';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite colour for gates. Pink spikes always hurt.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.';
 let vibrationEnabled = true;
 try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
 const vibrationButton = $('vibrationBtn');
@@ -108,6 +110,8 @@ const soundEffects = {
  jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url).href),
  phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
  orb: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
+ shield: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
+ shieldPickup: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
  death: new Audio(new URL('./assets/sfx/alarm.ogg', import.meta.url).href),
  win: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
 };
@@ -217,6 +221,10 @@ if (import.meta.env.DEV) {
  (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
  (window as any).__setBackdropDistance = (distance: number) => { game.state.distance = distance; renderDirty = true; };
  (window as any).__setTestTerrain = (terrain: import('./core').Terrain[]) => { game.state.terrain = terrain; renderDirty = true; };
+ (window as any).__setShieldCharged = (charged = true) => {
+  game.state.powerUps = charged ? collectShield(game.state.powerUps) : { ...game.state.powerUps, shieldCharges: 0 };
+  renderDirty = true;
+ };
  (window as any).__touchTestState = () => ({ phase: game.state.phase, jumps: game.state.stats.jumps, runnerY: game.state.runner.y, jumpHeld });
 }
 function meters() { return Math.floor(game.state.distance / 10); }
@@ -235,7 +243,7 @@ function showTitle() {
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
  $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
  $('overlayTitle').textContent = 'NEON DASH';
- $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Pink spikes always hurt.';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Pink spikes always hurt.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.';
  $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
  $('overlayHint').innerHTML = startHint; updateBest();
 }
@@ -401,6 +409,7 @@ function render(time) {
   ctx.restore();
  }
  for (const obstacle of s.obstacles) {
+  if (obstacle.shielded) continue;
   const x = obstacle.x - s.distance; if (x < -60 || x > worldRight + 60) continue;
   const neutral = obstacle.phase == null;
   const active = neutral || obstacle.phase === s.phase; const oc = neutral ? GAMEPLAY_COLORS.danger : obstacle.phase === 0 ? CYAN : VIOLET;
@@ -445,6 +454,15 @@ function render(time) {
   ctx.fillRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3); ctx.strokeRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3);
   ctx.shadowBlur = 0; ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
  }
+ for (const pickup of s.shieldPickups) {
+  const x = pickup.x - s.distance;
+  if (x < -pickup.radius - 20 || x > worldRight + pickup.radius + 20) continue;
+  const bob = reducedMotion ? 0 : Math.sin(clock * 4 + pickup.x * .02) * 3;
+  const y = pickup.y + bob;
+  drawGlow('shield-pickup', x - pickup.radius, y - pickup.radius, pickup.radius * 2, pickup.radius * 2,
+   glowUnit * .8 * pulse, SHIELD_CYAN, g => drawShieldMark(g, pickup.radius, pickup.radius, pickup.radius * 1.7));
+  drawShieldMark(ctx, x, y, pickup.radius * 1.7);
+ }
  const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<worldRight){ctx.strokeStyle=GAMEPLAY_COLORS.platform;ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=GAMEPLAY_COLORS.platform;ctx.font=`${Math.max(9, 12 * width / (canvas.clientWidth || 1))}px sans-serif`;ctx.fillText('FINISH',finishX-15,60);}
  const r=s.runner;
  if(mode==='running'){
@@ -478,8 +496,8 @@ function render(time) {
   ctx.fillRect(x,y,i%5===0?3:1.5,i%5===0?3:1.5);
  }ctx.globalAlpha=1;
  const effectAge=(time-visualEvent.at)/1000;
- if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win','orb'].includes(visualEvent.name)){
-  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?GAMEPLAY_COLORS.gold:color;ctx.lineWidth=2;
+ if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win','orb','shield','shieldPickup'].includes(visualEvent.name)){
+  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?GAMEPLAY_COLORS.gold:visualEvent.name==='shieldPickup'?SHIELD_CYAN:visualEvent.name==='shield'?GAMEPLAY_COLORS.white:color;ctx.lineWidth=2;
   const cx=r.x+r.width/2,cy=r.y+r.height/2;
   for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
  }
@@ -517,6 +535,7 @@ function render(time) {
   $('levelText').textContent=selectedMode === 'challenge' ? 'CHALLENGE' : `LEVEL ${String(level).padStart(2,'0')}`;
  }
  if (s.stats.orbs !== renderedOrbs) { renderedOrbs = s.stats.orbs; $('orbCount').textContent = String(renderedOrbs); }
+ $('shieldIndicator').hidden = s.powerUps.shieldCharges === 0;
  const phaseName=s.phase===0?'CYAN':'VIOLET';
  if (phaseButton.dataset.phase !== phaseName) {
   phaseButton.dataset.phase=phaseName;
@@ -526,7 +545,7 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
  if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }

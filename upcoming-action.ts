@@ -26,7 +26,7 @@ export function upcomingAction(game: Game): UpcomingAction | null {
     if (!next || seconds < next.seconds) next = cue;
   };
   for (const obstacle of s.obstacles) {
-    if (obstacle.cleared) continue;
+    if (obstacle.cleared || obstacle.shielded) continue;
     const active = obstacle.phase === null || obstacle.phase === s.phase;
     if (obstacle.kind === 'gate') {
       consider(obstacle.x, obstacle.width, active ? `SWITCH TO ${s.phase === 0 ? 'VIOLET' : 'CYAN'}` : 'GATE · PASS', active ? 'switch' : 'pass');

@@ -6,10 +6,12 @@
 @media(max-width:360px){.progress{top:38px;width:45vw;gap:7px}.game-overlay .menu-controls{display:none}}
 /* Keep the readout clear of both edge groups on narrow screens. */
 @media (max-width:600px) {
-  .progress { top: 44px; width: 45vw; }
+  .progress { top: 112px; width: min(28vw, 170px); }
 }
 .viewport:has(.game-overlay:not([hidden])) .hud,
 .viewport:has(.pause-overlay:not([hidden])) .hud { visibility: hidden; }
+.shield-indicator { color: var(--ui-gold); font-weight: 700; text-shadow: 0 0 10px var(--ui-gold); letter-spacing: 1px; }
+.shield-indicator>span { color: var(--ui-cyan); font-size: 14px; margin-right: 3px; }
 .menu { max-width: 100%; }
 @media (max-width:600px) {
   h1 { font-size: clamp(42px, 13vw, 78px); max-width: 100%; overflow-wrap: anywhere; }

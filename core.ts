@@ -1,4 +1,5 @@
 import { BEAT_SECONDS } from './rhythm';
+import { collectShield, createPowerUpState, resolveCollision, type PowerUpState } from './powerups';
 
 /**
  * Deterministic, fixed-step runner simulation.
@@ -21,14 +22,14 @@ export interface GameConfig {
 export interface Box { x: number; y: number; width: number; height: number }
 export interface Obstacle {
   x: number; width: number; height: number; phase: Phase | null;
-  kind?: 'spike' | 'gate'; cleared?: boolean;
+  kind?: 'spike' | 'gate'; cleared?: boolean; groupId?: number; shielded?: boolean;
 }
 export interface RunStats { jumps: number; switches: number; cleared: number; neutralCleared: number; orbs: number }
 export interface Collectible { x: number; y: number; radius: number }
 export interface Terrain { kind: 'gap' | 'platform'; x: number; width: number; height: number }
 export interface GameState {
   time: number; speed: number; level: number; stats: RunStats; distance: number; phase: Phase;
-  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[];
+  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[]; shieldPickups: Collectible[]; powerUps: PowerUpState;
   status: 'running' | 'dead' | 'won'; deathReason: 'obstacle' | 'fall' | 'platform' | null;
   jumpHeld: boolean; jumpBuffer: number; coyoteTime: number;
 }
@@ -37,6 +38,7 @@ export interface Input { jump?: boolean; togglePhase?: boolean }
 export interface Game {
   config: GameConfig; endless: boolean; generated: boolean; randomState: number; nextCluster: number;
   nextBeat: number; phraseStart: number; phrasePattern: readonly number[]; phraseIndex: number;
+  nextObstacleGroup: number;
   accumulator: number; pendingInput: Required<Input>; state: GameState;
 }
 
@@ -109,6 +111,7 @@ function extendCourse(game: Game): void {
     const motif = Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length;
     const gate = openingGate || motif === 2;
     const terrain = openingTerrain || motif === 1 || motif === 3 && game.phraseIndex !== 1;
+    const groupId = game.nextObstacleGroup++;
     if (terrain) {
       // The terrain phrase teaches a short climb before a gap, then gives a
       // full four-beat approach to the next gate. Heights stay low enough to
@@ -136,10 +139,10 @@ function extendCourse(game: Game): void {
     }
     else if (gate) s.obstacles.push({
       x: game.nextCluster, width: 22, height: 180,
-      phase: openingGate ? 0 : game.phraseIndex as Phase, kind: 'gate',
+      phase: openingGate ? 0 : game.phraseIndex as Phase, kind: 'gate', groupId,
     });
     else recipe.forEach((phase, i) => s.obstacles.push({
-      x: game.nextCluster + i * 28, width: 26, height, phase,
+      x: game.nextCluster + i * 28, width: 26, height, phase, groupId,
     }));
     // Orbs follow the required jump near its apex. Gate rewards stay on the
     // ground, so collecting never asks for an additional off-beat jump.
@@ -148,6 +151,15 @@ function extendCourse(game: Game): void {
       x: c.runnerX + courseDistance(c, orbTime) + c.runnerWidth / 2,
       y: c.groundY - (gate ? c.runnerHeight / 2 : 110), radius: 10,
     });
+    // A shield appears behind a gate at a fixed phrase interval. The pickup
+    // is on the ground path, visible in advance, and never depends on RNG.
+    if (gate && !openingGate && motif === 2 && game.phraseIndex === 0) {
+      s.shieldPickups.push({
+        x: game.nextCluster + 90,
+        y: c.groundY - c.runnerHeight / 2,
+        radius: 12,
+      });
+    }
     game.phraseIndex++;
     if (game.phraseIndex >= game.phrasePattern.length) {
       game.phraseStart += 8;
@@ -178,6 +190,11 @@ function extendCourse(game: Game): void {
     if (orb.x + orb.radius >= s.distance - 100) s.collectibles[write++] = orb;
   }
   s.collectibles.length = write;
+  write = 0;
+  for (const pickup of s.shieldPickups) {
+    if (pickup.x + pickup.radius >= s.distance - 100) s.shieldPickups[write++] = pickup;
+  }
+  s.shieldPickups.length = write;
 }
 
 function overlaps(a: Box, b: Box): boolean {
@@ -199,7 +216,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     x: config.obstacleStartX + i * config.obstacleGap,
     width: config.obstacleWidth,
     height: config.obstacleHeight,
-    phase: (i % 2) as Phase,
+    phase: (i % 2) as Phase, groupId: i,
   })) : [];
 
   const game: Game = {
@@ -209,6 +226,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     randomState: Number(config.seed) >>> 0,
     nextCluster: config.runnerX + courseDistance(config, 8 * BEAT_SECONDS),
     nextBeat: 8, phraseStart: 8, phrasePattern: [0, 6], phraseIndex: 0,
+    nextObstacleGroup: obstacleCount,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     state: {
@@ -223,6 +241,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       obstacles,
       terrain: [],
       collectibles: [],
+      shieldPickups: [],
+      powerUps: createPowerUpState(),
       status: "running",
       deathReason: null,
       jumpHeld: false,
@@ -298,6 +318,7 @@ export function step(game: Game, input: Input = {}): GameState {
     width: runnerBox.x + runnerBox.width - previousWorldX,
   };
   for (const obstacle of s.obstacles) {
+    if (obstacle.shielded) continue;
     if (!obstacle.cleared && obstacle.x + obstacle.width < runnerBox.x) {
       obstacle.cleared = true; s.stats.cleared++;
       if (obstacle.phase === null) s.stats.neutralCleared++;
@@ -309,6 +330,14 @@ export function step(game: Game, input: Input = {}): GameState {
     const halfWidth = box.width * Math.max(0, depth) / (2 * box.height);
     const slice = { x: box.x + box.width / 2 - halfWidth, y: box.y, width: 2 * halfWidth, height: box.height };
     if (overlaps(collisionBox, obstacle.kind === 'gate' ? box : slice)) {
+      const result = resolveCollision(s.powerUps, true);
+      if (result.absorbed) {
+        s.powerUps = result.state;
+        for (const member of s.obstacles) {
+          if (member === obstacle || obstacle.groupId !== undefined && member.groupId === obstacle.groupId) member.shielded = true;
+        }
+        continue;
+      }
       s.status = "dead";
       s.deathReason = "obstacle";
       return s;
@@ -323,6 +352,14 @@ export function step(game: Game, input: Input = {}): GameState {
     else s.collectibles[liveOrbs++] = orb;
   }
   s.collectibles.length = liveOrbs;
+  let liveShieldPickups = 0;
+  for (const pickup of s.shieldPickups) {
+    const dx = pickup.x - Math.max(runnerBox.x, Math.min(pickup.x, runnerBox.x + runnerBox.width));
+    const dy = pickup.y - Math.max(runnerBox.y, Math.min(pickup.y, runnerBox.y + runnerBox.height));
+    if (dx * dx + dy * dy <= pickup.radius * pickup.radius) s.powerUps = collectShield(s.powerUps);
+    else s.shieldPickups[liveShieldPickups++] = pickup;
+  }
+  s.shieldPickups.length = liveShieldPickups;
   if (s.distance + s.runner.x >= c.finishX) s.status = "won";
   return s;
 }
