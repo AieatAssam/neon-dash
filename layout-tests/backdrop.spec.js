@@ -58,5 +58,6 @@ test('a gap remains dark against the composited floor', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 700 });
   await expect.poll(async () => page.locator('canvas').evaluate(canvas => canvas.height)).toBe(700);
   await expect.poll(async () => (await pixelsAt(460))[1][0]).toBeGreaterThan(8);
+  await expect.poll(async () => (await pixelsAt(460))[0][0]).toBeLessThan(8);
   assertGap(await pixelsAt(460));
 });

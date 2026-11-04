@@ -2,6 +2,12 @@
 
 This note translates game design, animation, perception, and accessibility research into practical decisions for a fast, one-button precision platformer. Research findings are starting points for tuning, not universal laws: game feel is highly dependent on genre, timing, audiovisual style, and player preference.
 
+## Visual direction: a continuous grid
+
+TRON's designers describe a visual language built around emitted light and interactive geometric interfaces; its light-cycle trails connect the direction of travel to a persistent luminous form. [GMUNK on TRON: Legacy interfaces](https://inventinginteractive.com/2011/03/02/interview-gmunk/) · [ILM on light-cycle trails](https://www.ilm.com/tron-ares-david-seager-interview-ilm-vfx/)
+
+For Neon Dash, apply that language with dark architectural silhouettes, crisp illuminated edges and a restrained halo. Background geometry should move as a continuous world, with stable identities as it scrolls; color changes should transition gradually. Trails should record the cube's actual path, not imitate motion at its current height. Keep the player and obstacles visually dominant over decoration. This is a design interpretation of the references, not a claim that any specific effect guarantees fun.
+
 ## 1. Fun, mastery, and challenge
 
 The GameFlow model identifies concentration, challenge, player skill, control, clear goals, feedback, immersion, and social interaction as dimensions associated with enjoyment. For a short-run rhythm platformer, the most immediately actionable dimensions are clear goals, perceived control, rapid feedback, and a challenge that invites practice. Sweetser and Wyeth synthesize these as a design/evaluation model, not a formula that guarantees fun. [Sweetser & Wyeth, “GameFlow” (2005)](https://doi.org/10.1145/1077246.1077253)
