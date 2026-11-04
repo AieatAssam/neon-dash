@@ -85,7 +85,7 @@ const startHint = touchControls ? 'Tap PLAY to start' : 'press <kbd>SPACE</kbd> 
 const retryHint = touchControls ? 'Tap to retry' : 'or press <kbd>SPACE</kbd> to restart';
 document.querySelectorAll('.menu-controls').forEach(el => { if (touchControls) el.innerHTML = '<span>Tap to jump</span><span>Tap the colour button to switch</span>'; });
 $('overlayHint').innerHTML = startHint;
- $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite colour for gates. Pink spikes always hurt.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.';
+$('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Matching-color beacons pull during jumps.<br>Switch colors to stop the pull; switch to the opposite color to pass gates. Gravity stays down.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
 let vibrationEnabled = true;
 try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
 const vibrationButton = $('vibrationBtn');
@@ -126,7 +126,7 @@ $('viewport').append(phaseButton);
 const phaseHint = document.createElement('span');
 phaseHint.className = 'phase-help';
 phaseHint.hidden = true;
-phaseHint.textContent = touchControls ? 'TAP COLOUR TO SWITCH' : 'X / SHIFT · SWITCH TO THE OPPOSITE COLOR FOR GATES';
+phaseHint.textContent = touchControls ? 'TAP COLOUR BUTTON TO MATCH BEACON PULL' : 'X / SHIFT · MATCH BEACON COLOR TO FEEL ITS PULL';
 $('viewport').append(phaseHint);
 function updateBest() {
  $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
@@ -243,7 +243,7 @@ function showTitle() {
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
  $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
  $('overlayTitle').textContent = 'NEON DASH';
- $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Pink spikes always hurt.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Matching-color beacons pull during jumps.<br>Switch colors to stop the pull; switch to the opposite color to pass gates. Gravity stays down.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
  $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
  $('overlayHint').innerHTML = startHint; updateBest();
 }
@@ -408,6 +408,31 @@ function render(time) {
   }
   ctx.restore();
  }
+ for (const field of s.attractionFields) {
+  const x = field.x - s.distance; if (x < -field.radius - 20 || x > worldRight + field.radius + 20) continue;
+  const fieldColor = field.phase === 0 ? CYAN : VIOLET;
+  const active = field.phase === s.phase;
+  ctx.save(); ctx.translate(x, field.y);
+  ctx.globalAlpha = active ? .82 : .32;
+  ctx.strokeStyle = fieldColor; ctx.fillStyle = fieldColor; ctx.lineWidth = 2;
+  ctx.setLineDash(active ? [7, 5] : [3, 7]);
+  ctx.beginPath(); ctx.arc(0, 0, field.radius, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.globalAlpha = active ? .12 : .04;
+  ctx.beginPath(); ctx.arc(0, 0, field.radius - 3, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = active ? 1 : .45;
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+  // Four inward chevrons distinguish an attraction zone from a collision ring.
+  for (const [sx, sy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+   const ax = sx * field.radius * .68, ay = sy * field.radius * .68;
+   ctx.beginPath(); ctx.moveTo(ax + (sx ? -sx : -5), ay + (sy ? -5 : -sy));
+   ctx.lineTo(ax - sx * 8, ay - sy * 8);
+   ctx.lineTo(ax + (sx ? -sx : 5), ay + (sy ? 5 : -sy)); ctx.stroke();
+  }
+  const fieldLabelSize = Math.max(12, 12 * width / canvas.getBoundingClientRect().width);
+  ctx.font = `bold ${fieldLabelSize}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(active ? 'MATCH' : 'OFF', 0, -field.radius - 12);
+  ctx.restore();
+ }
  for (const obstacle of s.obstacles) {
   if (obstacle.shielded) continue;
   const x = obstacle.x - s.distance; if (x < -60 || x > worldRight + 60) continue;
@@ -565,7 +590,7 @@ function render(time) {
   phaseButton.dataset.phase=phaseName;
   phaseButton.innerHTML=touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
   phaseButton.style.color=color;
-  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active.${touchControls ? '' : ' Keyboard X or Shift.'}`);
+  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Matching beacon colors pull toward the beacon during jumps.${touchControls ? '' : ' Keyboard X or Shift.'}`);
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;

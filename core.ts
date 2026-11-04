@@ -1,5 +1,6 @@
 import { BEAT_SECONDS } from './rhythm';
 import { collectShield, createPowerUpState, resolveCollision, type PowerUpState } from './powerups';
+import { colorAttractionAcceleration, type ColorAttractionField } from './color-attraction';
 
 /**
  * Deterministic, fixed-step runner simulation.
@@ -29,7 +30,7 @@ export interface Collectible { x: number; y: number; radius: number }
 export interface Terrain { kind: 'gap' | 'platform'; x: number; width: number; height: number }
 export interface GameState {
   time: number; speed: number; level: number; stats: RunStats; distance: number; phase: Phase;
-  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[]; shieldPickups: Collectible[]; powerUps: PowerUpState;
+  runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[]; shieldPickups: Collectible[]; attractionFields: ColorAttractionField[]; powerUps: PowerUpState;
   status: 'running' | 'dead' | 'won'; deathReason: 'obstacle' | 'fall' | 'platform' | null;
   jumpHeld: boolean; jumpBuffer: number; coyoteTime: number;
 }
@@ -38,7 +39,7 @@ export interface Input { jump?: boolean; togglePhase?: boolean }
 export interface Game {
   config: GameConfig; endless: boolean; generated: boolean; randomState: number; nextCluster: number;
   nextBeat: number; phraseStart: number; phrasePattern: readonly number[]; phraseIndex: number;
-  nextObstacleGroup: number;
+  nextObstacleGroup: number; nextAttractionX: number; nextAttractionIndex: number;
   accumulator: number; pendingInput: Required<Input>; state: GameState;
 }
 
@@ -181,6 +182,20 @@ function extendCourse(game: Game): void {
     game.nextBeat = game.phraseStart + game.phrasePattern[game.phraseIndex];
     game.nextCluster = c.runnerX + courseDistance(c, game.nextBeat * BEAT_SECONDS);
   }
+  // A low-frequency series keeps the color-pull mechanic present after its
+  // tutorial. The first beacon is deliberately on a clear runway; later ones
+  // are deterministic and spaced far enough apart that their forces cannot stack.
+  while (game.nextAttractionX < Math.min(s.distance + 2400, c.finishX - 180)) {
+    s.attractionFields.push({
+      x: game.nextAttractionX,
+      y: c.groundY - 130,
+      radius: 180,
+      phase: (game.nextAttractionIndex % 2) as Phase,
+      maxAcceleration: Math.min(1200, c.gravity * .75),
+    });
+    game.nextAttractionIndex++;
+    game.nextAttractionX = c.runnerX + 450 + game.nextAttractionIndex * 4200;
+  }
   // Keep the live obstacle array stable. This runs on every fixed simulation
   // step, so Array#filter would otherwise allocate a fresh array 120 times a
   // second during an endless run.
@@ -207,6 +222,11 @@ function extendCourse(game: Game): void {
     if (pickup.x + pickup.radius >= s.distance - 100) s.shieldPickups[write++] = pickup;
   }
   s.shieldPickups.length = write;
+  write = 0;
+  for (const field of s.attractionFields) {
+    if (field.x + field.radius >= s.distance - 100) s.attractionFields[write++] = field;
+  }
+  s.attractionFields.length = write;
 }
 
 /** A one-beat warning precedes a solid, half-second floor burst.
@@ -250,6 +270,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     nextCluster: config.runnerX + courseDistance(config, 8 * BEAT_SECONDS),
     nextBeat: 8, phraseStart: 8, phrasePattern: (Number(config.seed) >>> 0) % 2 === 1 ? [0, 6] : [0, 4], phraseIndex: 0,
     nextObstacleGroup: obstacleCount,
+    nextAttractionX: config.runnerX + 450,
+    nextAttractionIndex: 0,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     state: {
@@ -265,6 +287,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       terrain: [],
       collectibles: [],
       shieldPickups: [],
+      attractionFields: [],
       powerUps: createPowerUpState(),
       status: "running",
       deathReason: null,
@@ -306,8 +329,16 @@ export function step(game: Game, input: Input = {}): GameState {
   s.distance += s.speed * dt;
   if (game.generated) extendCourse(game);
   const previousBottom = s.runner.y + s.runner.height;
+  const airborne = !s.runner.grounded;
   s.runner.grounded = false;
-  s.runner.vy += c.gravity * dt;
+  let verticalAcceleration = c.gravity;
+  if (airborne) {
+    const runnerCenter = { x: previousWorldX + s.runner.width / 2, y: s.runner.y + s.runner.height / 2 };
+    for (const field of s.attractionFields) {
+      verticalAcceleration += colorAttractionAcceleration(runnerCenter, field, s.phase);
+    }
+  }
+  s.runner.vy += verticalAcceleration * dt;
   s.runner.y += s.runner.vy * dt;
   const floor = c.groundY - s.runner.height;
   const worldX = s.distance + s.runner.x;

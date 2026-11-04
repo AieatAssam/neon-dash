@@ -81,6 +81,63 @@ test("phase toggle is consumed once when advance simulates multiple steps", () =
   assert.equal(game.state.stats.switches, 1);
 });
 
+test('matching color fields bend airborne jumps toward their center, while a mismatch leaves the arc unchanged', () => {
+  const make = phase => {
+    const game = createGame({ speed: 0, obstacleStartX: 10000, finishX: 100000 });
+    game.state.phase = phase;
+    game.state.attractionFields = [{
+      x: game.config.runnerX + game.config.runnerWidth / 2,
+      y: game.config.groundY - 130,
+      radius: 180,
+      phase: 0,
+      maxAcceleration: 1200,
+    }];
+    return game;
+  };
+  const pulled = make(0);
+  const unmatched = make(1);
+  for (let i = 0; i < 30; i++) {
+    step(pulled, { jump: i === 0 });
+    step(unmatched, { jump: i === 0 });
+  }
+  assert.ok(pulled.state.runner.y < unmatched.state.runner.y - 15, 'matching beacon creates a visible upward arc change');
+  assert.ok(pulled.state.runner.vy < unmatched.state.runner.vy);
+  assert.equal(pulled.state.status, 'running');
+  assert.equal(unmatched.state.status, 'running');
+});
+
+test('color fields do not lift the runner off the ground or reverse gravity', () => {
+  const game = createGame({ speed: 0, obstacleStartX: 10000, finishX: 100000 });
+  game.state.attractionFields = [{ x: game.config.runnerX + 12, y: game.config.groundY - 130,
+    radius: 180, phase: 0, maxAcceleration: game.config.gravity * .75 }];
+  step(game);
+  assert.equal(game.state.runner.grounded, true);
+  assert.equal(game.state.runner.vy, 0);
+
+  game.state.runner.grounded = false;
+  game.state.runner.y -= 1;
+  game.state.runner.vy = -1;
+  game.state.attractionFields[0].y = game.state.runner.y + game.state.runner.height / 2 + 100;
+  step(game);
+  assert.ok(game.state.runner.vy > -1, 'field below the runner adds downward acceleration, not inverted gravity');
+});
+
+test('generated games include a clear intro beacon and deterministic alternating later fields', () => {
+  const a = createGame({ mode: 'challenge', seed: 17, speed: 240, maxSpeed: 240 });
+  const b = createGame({ mode: 'challenge', seed: 17, speed: 240, maxSpeed: 240 });
+  assert.deepEqual(a.state.attractionFields, b.state.attractionFields);
+  const firstHazard = Math.min(...a.state.obstacles.map(o => o.x), ...a.state.terrain.map(t => t.x));
+  const intro = a.state.attractionFields[0];
+  assert.equal(intro.phase, 0);
+  assert.ok(intro.x + intro.radius < firstHazard, 'intro beacon clears the first hazard by its full radius');
+  for (let i = 0; i < 120 * 20; i++) {
+    a.state.runner.y = -10000;
+    a.state.runner.vy = 0;
+    step(a);
+  }
+  assert.ok(a.state.attractionFields.some(field => field.phase === 1), 'later beacon teaches the opposite color');
+});
+
 test("spike collision respects the triangular tip instead of its empty corners", () => {
   const game = createGame({ runnerX: 0, runnerWidth: 4, runnerHeight: 4, groundY: 100, gravity: 0, speed: 0, obstacleStartX: 3, obstacleWidth: 28, obstacleHeight: 42, obstacleGap: 1000, finishX: 100 });
   game.state.runner.y = 58;
