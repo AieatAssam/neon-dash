@@ -21,3 +21,10 @@ test('glow cache enforces entry limit and accounts for replacement', () => {
  cache.set('c', 4, 1);
  assert.equal(cache.get('a'), undefined); assert.equal(cache.get('b'), 3);
 });
+
+test('soft glow rasterization caps device resolution while preserving world-space blur', async () => {
+ const { glowRasterMetrics } = await import('../glow-cache.ts');
+ assert.deepEqual(glowRasterMetrics(2.4, 3, 30), { scale: 1.2, radius: 15 });
+ assert.deepEqual(glowRasterMetrics(1.6, 2, 20), { scale: 1.2, radius: 15.75 });
+ assert.deepEqual(glowRasterMetrics(0.8, 1, 12), { scale: 0.8, radius: 12 });
+});

@@ -96,3 +96,31 @@ for (const [width, height] of sizes.slice(0, 3)) {
     }
   });
 }
+
+test('a touch-capable desktop viewport exposes the jump control', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: false });
+  try {
+    const page = await context.newPage();
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+    await page.locator('#playBtn').click();
+    await expect(page.locator('#jumpBtn')).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test('hybrid pointer cascade keeps touch jump visible when the primary pointer is fine', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+  const css = await page.evaluate(async () => (await fetch('/style.css', { headers: { Accept: 'text/css' } })).text());
+  // Chromium cannot emulate a fine primary pointer and a coarse secondary pointer
+  // together. Activate exactly those two media queries to exercise their real cascade.
+  const simulated = css.replaceAll('@media(pointer:fine)', '@media all')
+    .replaceAll('@media(any-pointer:coarse)', '@media all');
+  const display = async stylesheet => {
+    await page.setContent(`<style>${stylesheet}</style><button class="jump-button">Jump</button>`);
+    return page.locator('.jump-button').evaluate(el => getComputedStyle(el).display);
+  };
+  expect(await display(simulated.replace('@media all{.jump-button{display:flex}}', ''))).toBe('none');
+  expect(await display(simulated)).toBe('flex');
+});

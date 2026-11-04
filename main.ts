@@ -5,7 +5,7 @@ import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
 import { upcomingAction, PREVIEW_SECONDS } from './upcoming-action';
-import { GlowCache } from './glow-cache';
+import { GlowCache, glowRasterMetrics } from './glow-cache';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
@@ -16,14 +16,13 @@ const surface = canvas;
 const ctx = surface.getContext('2d')!;
 // The static backdrop is composited by the browser instead of copied into every frame.
 let backdropKey = '';
-// Rasterize repeated bloom at backing-store resolution; outlines are still drawn
-// directly on the main canvas so their edges remain crisp while objects move.
+// Cache soft bloom at up to 1.5 device pixels per CSS pixel; outlines are still
+// drawn on the full-resolution canvas so their edges remain crisp while objects move.
 // Limit pixel storage across viewport sizes as well as the number of entries.
 const glowCache = new GlowCache<{ canvas: HTMLCanvasElement; pad: number }>(8 * 1024 * 1024, 128);
 function drawGlow(key: string, x: number, y: number, w: number, h: number, blur: number, color: string, draw: (g: CanvasRenderingContext2D) => void) {
  const transform = ctx.getTransform();
- const scale = Math.round(Math.hypot(transform.a, transform.b) * 10000) / 10000;
- const radius = Math.round(blur / 3) * 3;
+ const { scale, radius } = glowRasterMetrics(Math.hypot(transform.a, transform.b), viewportMetrics.dpr, blur);
  const cacheKey = [key, w, h, scale, radius, color].join(':');
  let sprite = glowCache.get(cacheKey);
  if (!sprite) {

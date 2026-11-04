@@ -16,3 +16,12 @@ export class GlowCache<T> {
   this.entries.set(key, { value, pixels }); this.pixels += pixels;
  }
 }
+
+/** Soft bloom can use fewer device pixels without reducing foreground edge quality. */
+export function glowRasterMetrics(fullScale: number, dpr: number, blur: number) {
+ const ratio = Math.min(1, 1.5 / dpr);
+ return {
+  scale: Math.round(fullScale * ratio * 10000) / 10000,
+  radius: Math.round(blur / 3) * 3 * ratio,
+ };
+}
