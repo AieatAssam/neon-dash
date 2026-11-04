@@ -108,16 +108,21 @@ function extendCourse(game: Game): void {
     const openingTerrain = game.phraseStart === 8 && game.phraseIndex === 1;
     const motif = Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length;
     const gate = openingGate || motif === 2;
-    const terrain = openingTerrain || motif === 1 && game.phraseIndex < 2 || motif === 3 && game.phraseIndex !== 1;
+    const terrain = openingTerrain || motif === 1 || motif === 3 && game.phraseIndex !== 1;
     if (terrain) {
-      // Terrain runs finish by beat four to leave a full four-beat approach
-      // to the next phase gate. Mixed runs bookend
-      // their spike cluster with gaps; each feature is a single-jump width.
-      const gap = openingTerrain ? random(game) < .5 : motif === 3 || game.phraseIndex === 1;
+      // The terrain phrase teaches a short climb before a gap, then gives a
+      // full four-beat approach to the next gate. Heights stay low enough to
+      // clear from the ground and land safely when approached with a jump.
+      // Mixed runs bookend their spike cluster with single-jump-width gaps.
+      const climbingPlatform = !openingTerrain && motif === 1 && game.phraseIndex < 2;
+      const gap = openingTerrain ? random(game) < .5 : motif === 3 || motif === 1 && game.phraseIndex === 2;
+      const platformHeight = climbingPlatform
+        ? (game.phraseIndex === 0 ? 24 : 32)
+        : 28;
       s.terrain.push({
         kind: gap ? 'gap' : 'platform', x: game.nextCluster,
         width: openingTerrain ? (gap ? 90 : 80) : (gap ? 100 : 96),
-        height: gap ? 0 : 28,
+        height: gap ? 0 : platformHeight,
       });
     }
     else if (gate) s.obstacles.push({

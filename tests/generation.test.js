@@ -91,12 +91,15 @@ test('phrases combine jump runs, raised landings, gaps, and alternating gates', 
     assert.equal(game.state.status, 'running');
   }
   const atBeat = beat => features.get(game.config.runnerX + beat * BEAT_SECONDS * 240);
-  for (const beat of [16, 18, 20, 22, 28, 42]) {
+  for (const beat of [16, 18, 20, 22, 42]) {
     const feature = atBeat(beat);
     assert.ok(feature && !feature.kind, `spike cluster at beat ${beat}`);
   }
   assert.equal(atBeat(24).kind, 'platform');
-  for (const beat of [26, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
+  assert.equal(atBeat(24).height, 24);
+  assert.equal(atBeat(26).kind, 'platform');
+  assert.equal(atBeat(26).height, 32, 'terrain phrase climbs to a second platform');
+  for (const beat of [28, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
   assert.equal(atBeat(32).kind, 'gate');
   assert.equal(atBeat(36).kind, 'gate');
   assert.notEqual(atBeat(32).phase, atBeat(36).phase);
