@@ -11,7 +11,7 @@ for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElem
 
 const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
-const surface = document.createElement('canvas');
+const surface = canvas;
 const ctx = surface.getContext('2d')!;
 // The backdrop depends only on the viewport and palette, not on game time.
 const backdrop = document.createElement('canvas');
@@ -416,13 +416,7 @@ function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;l
 }
 
 class RunScene extends Phaser.Scene {
- texture!: Phaser.Textures.CanvasTexture;
- picture!: Phaser.GameObjects.Image;
  constructor() { super('run'); }
- create() {
-  this.texture = this.textures.addCanvas('playfield', surface)!;
-  this.picture = this.add.image(0, 0, 'playfield').setOrigin(0);
- }
  update(time: number) {
   const rect = canvas.getBoundingClientRect();
   // A hidden or collapsed canvas has no usable coordinate system. Keep the
@@ -439,27 +433,21 @@ class RunScene extends Phaser.Scene {
   const height = Math.max(1, Math.round(rect.height * dpr));
   if (this.scale.width !== width || this.scale.height !== height) {
    this.scale.resize(width, height);
-  }
-  if (this.texture.width !== width || this.texture.height !== height) {
-   this.texture.setSize(width, height);
-   this.picture.setSizeToFrame();
    renderDirty = true;
   }
   tick(time);
-  if (this.picture.displayWidth !== this.scale.width || this.picture.displayHeight !== this.scale.height) {
-   this.picture.setDisplaySize(this.scale.width, this.scale.height);
-  }
  }
 }
 
 new Phaser.Game({
- // Canvas renders the changing surface directly, avoiding a full-screen GPU
- // texture allocation and upload on every frame.
+ // Draw directly to the visible canvas and retain static frames when paused.
+ // This avoids copying a full-resolution offscreen canvas every frame.
  type: Phaser.CANVAS,
  canvas,
  width: canvas.clientWidth || 680,
  height: canvas.clientHeight || 480,
  transparent: true,
+ clearBeforeRender: false,
  scale: { mode: Phaser.Scale.NONE },
  scene: RunScene,
  audio: { noAudio: true },

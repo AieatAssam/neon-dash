@@ -17,7 +17,7 @@ Sound is optional. Supported devices can also provide short haptic feedback; sou
 
 Install dependencies with `npm ci`, then run `npm run dev` and open the local address printed by Vite. `npm run build` type-checks and creates the production site in `dist/`; `npm run preview` serves that build locally. No backend is required. The GitHub Actions workflow deploys `dist/` to GitHub Pages.
 
-Run `npm test` for simulation tests and `npm run layout` for the browser layout matrix. After installing Playwright Chromium, `npm run perf` samples 20 active frames at 390×844, DPR 3 and 4× CPU throttling. Results vary with the host and do not replace physical-device testing.
+Run `npm test` for simulation tests and `npm run layout` for the browser layout matrix. After installing Playwright Chromium, `npm run perf` skips 5 warm-up frames per run and collects 20 active frame intervals at 390×844, DPR 3 and 4× CPU throttling. It retries up to 5 times if the player hits a hazard before enough samples are collected, and reports mean, median, tail percentiles, variability, and intervals over 25 ms. Results vary with the host and do not replace physical-device testing.
 
 ## Project notes
 
