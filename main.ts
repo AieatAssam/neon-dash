@@ -7,6 +7,7 @@ import { viewportWorldSize } from './viewport';
 import { upcomingAction, PREVIEW_SECONDS } from './upcoming-action';
 import { GlowCache, glowRasterMetrics } from './glow-cache';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
+import { createCheckpoint, restoreCheckpoint, type PracticeCheckpoint } from './practice';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
 
@@ -45,6 +46,8 @@ let selectedMode: 'challenge' | 'endless' = 'challenge';
 let game: any = createGame({ seed: runSeed, mode: selectedMode });
 let mode = 'ready';
 let attempt = 0;
+let activePractice = false;
+let checkpoints: PracticeCheckpoint[] = [];
 let progress = { bestDistance: 0, challengeBest: 0, challengeWins: 0, runs: 0, unlocked: [] };
 try { const saved = JSON.parse(localStorage.getItem('neon-dash-progress')); if (saved && typeof saved === 'object') progress = { ...progress, ...saved, unlocked: Array.isArray(saved.unlocked) ? saved.unlocked : [] }; } catch {}
 let best = Math.floor((Number(progress.bestDistance) || 0) / 10);
@@ -146,8 +149,15 @@ function playSfx(name) {
  sound.currentTime = 0;
  sound.play().catch(() => {});
 }
+function updatePracticeControls() {
+ $('practiceBadge').hidden = !activePractice;
+ $('practiceControls').hidden = !activePractice || mode !== 'running';
+ $('checkpointCount').textContent = `${checkpoints.length} checkpoint${checkpoints.length === 1 ? '' : 's'}`;
+ $('removeCheckpointBtn').disabled = checkpoints.length === 0;
+}
 function start(newCircuit = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+ activePractice = $('practiceMode').checked; checkpoints = [];
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
  game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
  renderDirty = true; lastTime = 0;
@@ -155,31 +165,35 @@ function start(newCircuit = false) {
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
+ updatePracticeControls();
  $('status').textContent = touchControls ? `Attempt ${attempt}. Tap to jump. Tap the colour button to switch.` : `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
  playMusic();
 }
 function pause() {
- if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); playMusic(); }
+ if (mode === 'running') { jumpHeld = false; phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); updatePracticeControls(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); updatePracticeControls(); playMusic(); }
 }
 function finish() {
  const distance = meters();
  const previousUnlocks = progress.unlocked;
  const challengePercent = mode === 'won' || game.state.status === 'won' ? 100 : challengeProgress(game.state.distance, game.config.runnerX, game.config.finishX);
- progress = mergeProgress(progress, game.state, selectedMode, challengePercent);
- best = Math.floor(progress.bestDistance / 10);
- try { localStorage.setItem('neon-dash-progress', JSON.stringify(progress)); } catch {}
- showObjective(progress.unlocked.filter(id => !previousUnlocks.includes(id)));
+ if (!activePractice) {
+  progress = mergeProgress(progress, game.state, selectedMode, challengePercent);
+  best = Math.floor(progress.bestDistance / 10);
+  try { localStorage.setItem('neon-dash-progress', JSON.stringify(progress)); } catch {}
+ }
+ showObjective(activePractice ? [] : progress.unlocked.filter(id => !previousUnlocks.includes(id)));
  updateBest();
  mode = game.state.status;
+ updatePracticeControls();
  renderDirty = true;
  playSfx(mode === 'won' ? 'win' : 'death');
  music.pause();
  $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
- $('overlayKicker').textContent = mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
+ $('overlayKicker').textContent = activePractice ? 'PRACTICE COMPLETE · NO RECORDS SAVED' : mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
- $('overlayDescription').innerHTML = mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `PINK SPIKES ARE ALWAYS DANGEROUS · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
+ $('overlayDescription').innerHTML = activePractice ? `PRACTICE RUN COMPLETE · ${game.state.stats.orbs} ORBS COLLECTED<br>Official records and achievements are unchanged.` : mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `PINK SPIKES ARE ALWAYS DANGEROUS · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
  $('playLabel').textContent = 'RETRY SAME CIRCUIT';
  $('freshBtn').hidden = false;
  $('seedText').textContent = `CIRCUIT SEED · ${runSeed}`;
@@ -193,8 +207,12 @@ if (import.meta.env.DEV) {
 }
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
-document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
- selectedMode = input.value as 'challenge' | 'endless';
+function showTitle() {
+ mode = 'ready'; activePractice = false; checkpoints = []; accumulator = 0; lastTime = 0;
+ jumpHeld = false; jumpQueued = false; phaseQueued = false; music.pause();
+ $('overlay').hidden = false; $('pauseOverlay').hidden = true; $('pauseBtn').style.display = 'none';
+ $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
+ phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; updatePracticeControls();
  runSeed = Math.floor(Math.random() * 0x100000000);
  attempt = 0; $('attempt').textContent = '01';
  game = createGame({ seed: runSeed, mode: selectedMode });
@@ -204,8 +222,32 @@ document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(inpu
  $('overlayTitle').textContent = 'NEON DASH';
  $('overlayDescription').innerHTML = 'Jump spikes and gaps. Land on platforms.<br>Switch to the opposite color for gates. Pink spikes always hurt.';
  $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
- $('overlayHint').innerHTML = startHint; mode = 'ready'; updateBest();
+ $('overlayHint').innerHTML = startHint; updateBest();
+}
+document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
+ selectedMode = input.value as 'challenge' | 'endless'; showTitle();
 }));
+$('titleBtn').addEventListener('click', () => { showTitle(); $('playBtn').focus(); });
+$('checkpointBtn').addEventListener('click', () => {
+ if (!activePractice || mode !== 'running') return;
+ $('checkpointBtn').blur();
+ const checkpoint = createCheckpoint(game);
+ if (checkpoint) { checkpoints.push(checkpoint); updatePracticeControls(); $('status').textContent = `Checkpoint ${checkpoints.length} saved.`; }
+});
+$('removeCheckpointBtn').addEventListener('click', () => {
+ if (!activePractice || mode !== 'running' || !checkpoints.length) return;
+ $('removeCheckpointBtn').blur();
+ checkpoints.pop(); updatePracticeControls(); $('status').textContent = 'Last checkpoint removed.';
+});
+function practiceRespawn() {
+ const restored = checkpoints.length ? restoreCheckpoint(checkpoints[checkpoints.length - 1]) : null;
+ game = restored || createGame({ seed: runSeed, mode: selectedMode });
+ attempt++; $('attempt').textContent = String(attempt).padStart(2, '0');
+ accumulator = 0; lastTime = 0; jumpHeld = false; jumpQueued = false; phaseQueued = false; rotation = 0;
+ renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; renderedOrbs = -1; renderDirty = true;
+ beatClock.reset(); syncMusic(true);
+ $('status').textContent = restored ? `Attempt ${attempt}. Returned to checkpoint.` : `Attempt ${attempt}. Returned to start.`;
+}
 $('playBtn').addEventListener('click', () => start(false));
 $('freshBtn').addEventListener('click', () => start(true));
 $('restartBtn').addEventListener('click', () => start(false));
@@ -448,7 +490,7 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
  if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }

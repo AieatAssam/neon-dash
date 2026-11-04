@@ -17,7 +17,7 @@ for (const [width, height] of sizes) {
         await page.evaluate(s => window.__layoutTestState(s), state === 'complete' ? 'won' : 'dead');
       }
       const overlay = state === 'pause' ? '#pauseOverlay' : '#overlay';
-      const controls = state === 'play' ? ['#pauseBtn', '#soundBtn'] : state === 'pause' ? ['#resumeBtn', '#restartBtn'] : ['#playBtn', ...(state === 'title' ? [] : ['#freshBtn'])];
+      const controls = state === 'play' ? ['#pauseBtn', '#soundBtn'] : state === 'pause' ? ['#resumeBtn', '#restartBtn', '#titleBtn'] : ['#playBtn', ...(state === 'title' ? [] : ['#freshBtn'])];
       for (const selector of controls) {
         const item = page.locator(selector);
         await expect(item).toBeVisible();
@@ -30,7 +30,7 @@ for (const [width, height] of sizes) {
       if (state !== 'play') {
         await expect(page.locator('.hud')).toBeHidden();
         const parts = state === 'pause'
-          ? ['.overlay-kicker', 'h2', '#resumeBtn', '#restartBtn', '.menu-controls', '.audio-credit']
+          ? ['.overlay-kicker', 'h2', '#resumeBtn', '#restartBtn', '#titleBtn', '.menu-controls', '.audio-credit']
           : ['#overlayKicker', '#overlayTitle', '#overlayDescription', '.mode-select', '#playBtn', '#freshBtn', '#overlayHint', '#seedText', '.achievement-summary', '.menu-controls'];
         const rectangles = [];
         for (const selector of parts) {
@@ -123,4 +123,48 @@ test('hybrid pointer cascade keeps touch jump visible when the primary pointer i
   };
   expect(await display(simulated.replace('@media all{.jump-button{display:flex}}', ''))).toBe('none');
   expect(await display(simulated)).toBe('flex');
+});
+
+test('practice controls and completion do not change official progress', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+  const progress = JSON.stringify({ bestDistance: 100, challengeBest: 12, challengeWins: 1, runs: 2, unlocked: [] });
+  await page.evaluate(value => localStorage.setItem('neon-dash-progress', value), progress);
+  await page.reload();
+  await page.locator('#practiceMode').check();
+  await page.locator('#playBtn').click();
+  await expect(page.locator('#practiceBadge')).toBeVisible();
+  await page.locator('#checkpointBtn').click();
+  await expect(page.locator('#checkpointCount')).toHaveText('1 checkpoint');
+  await expect(page.locator('#checkpointBtn')).not.toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(page.locator('#checkpointCount')).toHaveText('1 checkpoint');
+  await page.locator('#removeCheckpointBtn').click();
+  await expect(page.locator('#removeCheckpointBtn')).not.toBeFocused();
+  await expect(page.locator('#checkpointCount')).toHaveText('0 checkpoints');
+  await page.evaluate(() => window.__layoutTestState('won'));
+  await expect(page.locator('#overlayKicker')).toHaveText('PRACTICE COMPLETE · NO RECORDS SAVED');
+  expect(await page.evaluate(() => localStorage.getItem('neon-dash-progress'))).toBe(progress);
+});
+
+
+test('endless practice can return to mode selection without saving progress', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+  const progress = JSON.stringify({ bestDistance: 100, challengeBest: 12, challengeWins: 1, runs: 2, unlocked: [] });
+  await page.evaluate(value => localStorage.setItem('neon-dash-progress', value), progress);
+  await page.reload();
+  await page.locator('input[name=gameMode][value=endless]').check();
+  await page.locator('#practiceMode').check();
+  await page.locator('#playBtn').click();
+  await page.locator('#checkpointBtn').click();
+  await page.locator('#pauseBtn').click();
+  await page.locator('#titleBtn').click();
+  await expect(page.locator('#overlay')).toBeVisible();
+  await expect(page.locator('input[name=gameMode][value=challenge]')).toBeEnabled();
+  await expect(page.locator('#practiceControls')).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem('neon-dash-progress'))).toBe(progress);
+  await page.locator('input[name=gameMode][value=challenge]').check();
+  await page.locator('#practiceMode').uncheck();
+  await page.locator('#playBtn').click();
+  await expect(page.locator('#practiceBadge')).toBeHidden();
 });
