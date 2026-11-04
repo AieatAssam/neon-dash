@@ -30,7 +30,7 @@ export interface GameState {
   time: number; speed: number; level: number; stats: RunStats; distance: number; phase: Phase;
   runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[];
   status: 'running' | 'dead' | 'won'; deathReason: 'obstacle' | 'fall' | 'platform' | null;
-  jumpHeld: boolean; jumpBuffer: number;
+  jumpHeld: boolean; jumpBuffer: number; coyoteTime: number;
 }
 /** Jump is held; phase switching is an edge-triggered action. */
 export interface Input { jump?: boolean; togglePhase?: boolean }
@@ -202,6 +202,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       deathReason: null,
       jumpHeld: false,
       jumpBuffer: 0,
+      coyoteTime: 0,
     },
   };
   if (game.generated) extendCourse(game);
@@ -215,9 +216,13 @@ export function step(game: Game, input: Input = {}): GameState {
   if (s.status !== "running") return s;
 
   if (input.togglePhase) { s.phase = s.phase === 0 ? 1 : 0; s.stats.switches++; }
+  // A small grace window makes an edge press behave like the jump the player
+  // intended. Consume it on takeoff so it cannot become an airborne jump.
+  s.coyoteTime = s.runner.grounded ? .08 : Math.max(0, s.coyoteTime - c.fixedStep);
   if (input.jump && !s.jumpHeld) s.jumpBuffer = .1;
-  if ((input.jump || s.jumpBuffer > 0) && s.runner.grounded) {
+  if ((input.jump || s.jumpBuffer > 0) && (s.runner.grounded || s.coyoteTime > 0)) {
     s.jumpBuffer = 0;
+    s.coyoteTime = 0;
     s.stats.jumps++;
     s.runner.vy = c.jumpVelocity;
     s.runner.grounded = false;

@@ -296,3 +296,44 @@ test("challenge progress measures distance from the starting position to the fin
   assert.equal(challengeProgress(8900, 100, 9000), 100);
   assert.equal(challengeProgress(10000, 100, 9000), 100);
 });
+
+test('jump remains available briefly after running off a gap edge', () => {
+  const game = createGame({ speed: 240, obstacleStartX: 10000, finishX: 1000 });
+  game.state.terrain = [{ kind: 'gap', x: 114, width: 150, height: 0 }];
+  step(game);
+  step(game);
+  assert.equal(game.state.runner.grounded, false);
+  for (let i = 0; i < 4; i++) step(game);
+  step(game, { jump: true });
+  assert.equal(game.state.stats.jumps, 1);
+  assert.ok(game.state.runner.vy < 0);
+});
+
+test('edge jump forgiveness expires and does not grant a second airborne jump', () => {
+  const expired = createGame({ speed: 240, obstacleStartX: 10000, finishX: 1000 });
+  expired.state.terrain = [{ kind: 'gap', x: 114, width: 400, height: 0 }];
+  for (let i = 0; i < 15; i++) step(expired);
+  step(expired, { jump: true });
+  assert.equal(expired.state.stats.jumps, 0);
+  assert.ok(expired.state.runner.vy > 0);
+
+  const jumping = createGame({ speed: 0, obstacleStartX: 10000 });
+  step(jumping, { jump: true });
+  step(jumping);
+  step(jumping, { jump: true });
+  assert.equal(jumping.state.stats.jumps, 1);
+});
+
+test('platform edge grace allows one late jump without refreshing in midair', () => {
+  const game = createGame({ speed: 240, obstacleStartX: 10000, finishX: 1000 });
+  game.state.terrain = [{ kind: 'platform', x: 80, width: 46, height: 28 }];
+  game.state.runner.y = game.config.groundY - 28 - game.state.runner.height;
+  for (let i = 0; i < 15; i++) step(game);
+  assert.equal(game.state.runner.grounded, false);
+  step(game, { jump: true });
+  assert.equal(game.state.stats.jumps, 1);
+  assert.ok(game.state.runner.vy < 0);
+  step(game);
+  step(game, { jump: true });
+  assert.equal(game.state.stats.jumps, 1);
+});

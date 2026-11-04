@@ -448,7 +448,7 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasGrounded=game.state.runner.grounded;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(wasGrounded&&!game.state.runner.grounded)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running')finish();}
  if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }
