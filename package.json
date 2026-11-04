@@ -8,7 +8,7 @@
     "preview": "vite preview",
     "test": "tsx --test tests/*.test.js",
     "layout": "playwright test",
-    "perf": "node scripts/perf-smoke.mjs"
+    "perf": "npm run build && node scripts/perf-smoke.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

@@ -13,6 +13,11 @@ const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
 const surface = document.createElement('canvas');
 const ctx = surface.getContext('2d')!;
+// The backdrop depends only on the viewport and palette, not on game time.
+const backdrop = document.createElement('canvas');
+const backdropCtx = backdrop.getContext('2d')!;
+let backdropKey = '';
+
 let runSeed = Math.floor(Math.random() * 0x100000000);
 let selectedMode: 'challenge' | 'endless' = 'challenge';
 let game: any = createGame({ seed: runSeed, mode: selectedMode });
@@ -159,7 +164,10 @@ function finish() {
  $('overlayHint').innerHTML = retryHint;
  $('status').textContent = mode === 'won' ? (touchControls ? 'Level complete! Tap to play again.' : 'Level complete! Press Space to play again.') : `Run ended at ${distance} meters. ${touchControls ? 'Tap to try again.' : 'Press Space to try again.'}`;
 }
-if (import.meta.env.DEV) (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
+if (import.meta.env.DEV) {
+ (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
+ (window as any).__setBackdropDistance = (distance: number) => { game.state.distance = distance; renderDirty = true; };
+}
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
 document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
@@ -222,13 +230,20 @@ function render(time) {
  const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
  const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
  const palette = ART_PALETTES[Math.floor(game.state.distance / 4800) % ART_PALETTES.length];
- const bg = ctx.createLinearGradient(0, 0, 0, height);
- bg.addColorStop(0, palette.top); bg.addColorStop(.7, palette.horizon); bg.addColorStop(1, palette.floor);
- ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
- // Broad colored light gives the thin luminous geometry a dark, saturated stage.
- const halo = ctx.createRadialGradient(width * .65, height * .48, 0, width * .65, height * .48, width * .65);
- halo.addColorStop(0, palette.pink + '28'); halo.addColorStop(.48, palette.blue + '0d'); halo.addColorStop(1, palette.blue + '00');
- ctx.fillStyle = halo; ctx.fillRect(0, 0, width, height);
+ const key = `${surface.width}:${surface.height}:${width}:${height}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
+ if (key !== backdropKey) {
+  backdrop.width = surface.width; backdrop.height = surface.height;
+  backdropCtx.setTransform(surface.width / width, 0, 0, surface.height / height, 0, 0);
+  const bg = backdropCtx.createLinearGradient(0, 0, 0, height);
+  bg.addColorStop(0, palette.top); bg.addColorStop(.7, palette.horizon); bg.addColorStop(1, palette.floor);
+  backdropCtx.fillStyle = bg; backdropCtx.fillRect(0, 0, width, height);
+  // Broad colored light gives the thin luminous geometry a dark, saturated stage.
+  const halo = backdropCtx.createRadialGradient(width * .65, height * .48, 0, width * .65, height * .48, width * .65);
+  halo.addColorStop(0, palette.pink + '28'); halo.addColorStop(.48, palette.blue + '0d'); halo.addColorStop(1, palette.blue + '00');
+  backdropCtx.fillStyle = halo; backdropCtx.fillRect(0, 0, width, height);
+  backdropKey = key;
+ }
+ ctx.drawImage(backdrop, 0, 0, width, height);
  const cameraX = canvas.clientWidth / canvas.clientHeight < .75 ? Math.min(0, width * .16 - c.runnerX) : 0;
  ctx.save(); ctx.translate(cameraX, worldOffsetY);
  // Monumental rings and angular skylines remain behind the collision silhouettes.

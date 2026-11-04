@@ -1,25 +1,44 @@
-/** Repeatable local browser probe; the server and browser are owned and closed here. */
+/** Repeatable local browser probe against the production bundle. */
 import { spawn } from 'node:child_process';
 import { chromium } from '@playwright/test';
 
 const port = 5189;
-const server = spawn(process.execPath, ['./node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { stdio: 'ignore' });
+const server = spawn(process.execPath, ['./node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { stdio: 'ignore' });
 let browser;
-async function stopOnSignal() {
-  server.kill('SIGTERM');
-  if (browser) await browser.close();
-  process.exit(124);
+let stopping;
+
+async function cleanup() {
+  if (stopping) return stopping;
+  stopping = (async () => {
+    if (server.exitCode === null && server.signalCode === null) {
+      server.kill('SIGTERM');
+      await new Promise(resolve => {
+        const timer = setTimeout(() => { server.kill('SIGKILL'); resolve(); }, 2000);
+        server.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  })();
+  return stopping;
 }
-process.once('SIGTERM', stopOnSignal);
-process.once('SIGINT', stopOnSignal);
+
+async function stopOnSignal(signal) {
+  await cleanup();
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+process.once('SIGTERM', () => { void stopOnSignal('SIGTERM'); });
+process.once('SIGINT', () => { void stopOnSignal('SIGINT'); });
+
 try {
   let ready = false;
   for (let i = 0; i < 100 && !ready; i++) {
-    if (server.exitCode !== null) throw new Error(`Vite exited (${server.exitCode}); port ${port} may be occupied`);
+    if (server.exitCode !== null) throw new Error(`Vite preview exited (${server.exitCode}); port ${port} may be occupied`);
     try { ready = (await fetch(`http://127.0.0.1:${port}/`)).ok; } catch {}
     if (!ready) await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (!ready) throw new Error('Vite did not become ready');
+  if (!ready) throw new Error('Vite preview did not become ready');
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true });
   const page = await context.newPage();
@@ -46,6 +65,5 @@ try {
   if (sorted.length < 20) process.exitCode = 1;
   await context.close();
 } finally {
-  if (browser) await browser.close();
-  server.kill('SIGTERM');
+  await cleanup();
 }
