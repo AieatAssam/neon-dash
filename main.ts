@@ -5,6 +5,7 @@ import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
 import { upcomingAction, PREVIEW_SECONDS } from './upcoming-action';
+import { GlowCache } from './glow-cache';
 import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
@@ -17,6 +18,30 @@ const ctx = surface.getContext('2d')!;
 const backdrop = document.createElement('canvas');
 const backdropCtx = backdrop.getContext('2d')!;
 let backdropKey = '';
+// Rasterize repeated bloom at backing-store resolution; outlines are still drawn
+// directly on the main canvas so their edges remain crisp while objects move.
+// Limit pixel storage across viewport sizes as well as the number of entries.
+const glowCache = new GlowCache<{ canvas: HTMLCanvasElement; pad: number }>(8 * 1024 * 1024, 128);
+function drawGlow(key: string, x: number, y: number, w: number, h: number, blur: number, color: string, draw: (g: CanvasRenderingContext2D) => void) {
+ const transform = ctx.getTransform();
+ const scale = Math.round(Math.hypot(transform.a, transform.b) * 10000) / 10000;
+ const radius = Math.round(blur / 3) * 3;
+ const cacheKey = [key, w, h, scale, radius, color].join(':');
+ let sprite = glowCache.get(cacheKey);
+ if (!sprite) {
+  const pad = Math.ceil((radius * 2 + 6) / scale);
+  const image = document.createElement('canvas');
+  image.width = Math.ceil((w + 2 * pad) * scale); image.height = Math.ceil((h + 2 * pad) * scale);
+  const g = image.getContext('2d')!;
+  g.setTransform(scale, 0, 0, scale, pad * scale, pad * scale);
+  g.shadowColor = color; g.shadowBlur = radius;
+  draw(g);
+  sprite = { canvas: image, pad };
+  glowCache.set(cacheKey, sprite, image.width * image.height);
+ }
+ ctx.drawImage(sprite.canvas, x - sprite.pad, y - sprite.pad, sprite.canvas.width / scale, sprite.canvas.height / scale);
+}
+
 
 let runSeed = Math.floor(Math.random() * 0x100000000);
 let selectedMode: 'challenge' | 'endless' = 'challenge';
@@ -292,7 +317,9 @@ function render(time) {
  for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.beginPath(); ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); ctx.stroke(); }
  for (let y = c.groundY + 18; y < height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); ctx.stroke(); }
  // A hot white core and wide bloom make the runway read as emitted light.
- ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = glowUnit * pulse; ctx.strokeStyle = color; ctx.lineWidth = 3;
+ ctx.save();
+ drawGlow('floor', 0, c.groundY + .5, worldRight, 0, glowUnit * pulse, color, g => { g.strokeStyle = color; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(worldRight, 0); g.stroke(); });
+ ctx.strokeStyle = color; ctx.lineWidth = 3;
  ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(worldRight, c.groundY + .5); ctx.stroke();
  ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.stroke();
  ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(worldRight, c.groundY + 7); ctx.stroke(); ctx.restore();
@@ -306,7 +333,8 @@ function render(time) {
    ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY + 12);
    ctx.moveTo(x + terrain.width, c.groundY); ctx.lineTo(x + terrain.width, c.groundY + 12); ctx.stroke();
   } else {
-   ctx.fillStyle = GAMEPLAY_COLORS.platformFill; ctx.strokeStyle = GAMEPLAY_COLORS.platform; ctx.lineWidth = 2; ctx.shadowColor = GAMEPLAY_COLORS.platform; ctx.shadowBlur = glowUnit * .5;
+   drawGlow('platform', x, c.groundY - terrain.height, terrain.width, terrain.height, glowUnit * .5, GAMEPLAY_COLORS.platform, g => { g.fillStyle = GAMEPLAY_COLORS.platformFill; g.strokeStyle = GAMEPLAY_COLORS.platform; g.lineWidth = 2; g.fillRect(0, 0, terrain.width, terrain.height); g.strokeRect(0, 0, terrain.width, terrain.height); });
+   ctx.fillStyle = GAMEPLAY_COLORS.platformFill; ctx.strokeStyle = GAMEPLAY_COLORS.platform; ctx.lineWidth = 2;
    ctx.fillRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
    ctx.strokeRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
    ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
@@ -318,7 +346,14 @@ function render(time) {
   const neutral = obstacle.phase == null;
   const active = neutral || obstacle.phase === s.phase; const oc = neutral ? GAMEPLAY_COLORS.danger : obstacle.phase === 0 ? CYAN : VIOLET;
   ctx.save(); ctx.globalAlpha = 1; if (!active) ctx.setLineDash([4, 3]);
-  ctx.shadowBlur = active ? glowUnit * .85 * pulse : 0; ctx.shadowColor = oc; ctx.strokeStyle = active ? oc : GAMEPLAY_COLORS.off;
+  if (active) drawGlow(obstacle.kind, x, c.groundY - obstacle.height, obstacle.width, obstacle.height, glowUnit * .85 * pulse, oc, g => {
+   const gradient = g.createLinearGradient(0, 0, 0, obstacle.height); gradient.addColorStop(0, oc + 'bb'); gradient.addColorStop(1, oc + '18');
+   g.fillStyle = gradient; g.strokeStyle = oc; g.lineWidth = 2.6; g.beginPath();
+   if (obstacle.kind === 'gate') g.rect(0, 0, obstacle.width, obstacle.height);
+   else { g.moveTo(0, obstacle.height); g.lineTo(obstacle.width / 2, 0); g.lineTo(obstacle.width, obstacle.height); g.closePath(); }
+   g.fill(); g.stroke();
+  });
+  ctx.strokeStyle = active ? oc : GAMEPLAY_COLORS.off;
   const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
   fill.addColorStop(0, active ? oc + 'bb' : oc + '16'); fill.addColorStop(1, active ? oc + '18' : oc + '08');
   ctx.fillStyle = fill; ctx.lineWidth = active ? 2.6 : 1.2;
@@ -328,7 +363,9 @@ function render(time) {
   } else {
    ctx.moveTo(x, c.groundY); ctx.lineTo(x + obstacle.width / 2, c.groundY - obstacle.height); ctx.lineTo(x + obstacle.width, c.groundY); ctx.closePath();
   }
-  ctx.fill(); ctx.stroke();
+  // Active sprites already contain their translucent fill; draw only the crisp contour again.
+  if (!active) ctx.fill();
+  ctx.stroke();
   if (obstacle.kind === 'gate') {
    ctx.shadowBlur = 0; ctx.strokeStyle = oc; ctx.lineWidth = 1;
    for (let y = c.groundY - obstacle.height + 12; y < c.groundY - 5; y += 18) { ctx.beginPath(); ctx.moveTo(x + 4, y); ctx.lineTo(x + obstacle.width - 4, y + 7); ctx.stroke(); }
@@ -341,7 +378,8 @@ function render(time) {
   if (x < -orb.radius - 20 || x > worldRight + orb.radius + 20) continue;
   const bob = reducedMotion ? 0 : Math.sin(clock * 4 + orb.x * .02) * 3;
   ctx.save(); ctx.translate(x, orb.y + bob); ctx.rotate(Math.PI / 4 + (reducedMotion ? 0 : Math.sin(clock * 2 + orb.x) * .12));
-  ctx.shadowColor = GAMEPLAY_COLORS.gold; ctx.shadowBlur = glowUnit * .7 * pulse; ctx.fillStyle = GAMEPLAY_COLORS.reward; ctx.strokeStyle = GAMEPLAY_COLORS.gold; ctx.lineWidth = 2;
+  drawGlow('orb', -orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3, glowUnit * .7 * pulse, GAMEPLAY_COLORS.gold, g => { g.fillStyle = GAMEPLAY_COLORS.reward; g.strokeStyle = GAMEPLAY_COLORS.gold; g.lineWidth = 2; g.fillRect(0, 0, orb.radius * 1.3, orb.radius * 1.3); g.strokeRect(0, 0, orb.radius * 1.3, orb.radius * 1.3); });
+  ctx.fillStyle = GAMEPLAY_COLORS.reward; ctx.strokeStyle = GAMEPLAY_COLORS.gold; ctx.lineWidth = 2;
   ctx.fillRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3); ctx.strokeRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3);
   ctx.shadowBlur = 0; ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
  }
@@ -350,7 +388,9 @@ function render(time) {
  if(mode==='running'){ctx.fillStyle=color;for(let i=1;i<8;i++){ctx.globalAlpha=.2*(1-i/8);const size=r.width*(1-i/11);ctx.fillRect(r.x-i*12,r.y+(r.height-size)/2,size,size);}ctx.globalAlpha=1;}
  if(!reducedMotion && !r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
  ctx.save();ctx.translate(r.x+r.width/2,r.y+r.height/2);ctx.rotate(rotation);
- ctx.shadowColor=color;ctx.shadowBlur=glowUnit*pulse;ctx.fillStyle=s.phase===0?GAMEPLAY_COLORS.runnerCyanFill:GAMEPLAY_COLORS.runnerVioletFill;ctx.strokeStyle=color;ctx.lineWidth=3;
+ const runnerFill=s.phase===0?GAMEPLAY_COLORS.runnerCyanFill:GAMEPLAY_COLORS.runnerVioletFill;
+ drawGlow('runner', -r.width/2, -r.height/2, r.width, r.height, glowUnit*pulse, color, g => { g.fillStyle=runnerFill; g.strokeStyle=color; g.lineWidth=3; g.fillRect(0,0,r.width,r.height); g.strokeRect(0,0,r.width,r.height); });
+ ctx.fillStyle=runnerFill;ctx.strokeStyle=color;ctx.lineWidth=3;
  ctx.fillRect(-r.width/2,-r.height/2,r.width,r.height);ctx.strokeRect(-r.width/2,-r.height/2,r.width,r.height);
  ctx.shadowBlur=0;ctx.strokeStyle=GAMEPLAY_COLORS.white;ctx.lineWidth=1;ctx.strokeRect(-r.width/2+3,-r.height/2+3,r.width-6,r.height-6);
  ctx.fillStyle=GAMEPLAY_COLORS.white;ctx.fillRect(-5,-5,3,3);ctx.fillRect(3,-5,3,3);ctx.fillRect(-4,3,9,2);ctx.restore();
