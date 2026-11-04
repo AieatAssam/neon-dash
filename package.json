@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "tsx --test tests/*.test.js",
-    "layout": "playwright test"
+    "layout": "playwright test",
+    "perf": "node scripts/perf-smoke.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"
