@@ -187,7 +187,7 @@ test('endless generation starts with the gate tutorial and spaces later gates', 
   const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
   const openingGate = game.state.obstacles.find(o => o.kind === 'gate');
   assert.ok(openingGate);
-  assert.equal(openingGate.phase, 0);
+  assert.ok(openingGate.phase === 0 || openingGate.phase === 1);
   assert.ok(Math.abs((openingGate.x - game.config.runnerX) / game.config.speed - 8 * (60 / 115)) < .01);
   assert.ok(['gap', 'platform'].includes(game.state.terrain[0].kind));
   assert.ok(Math.abs((game.state.terrain[0].x - game.config.runnerX) / game.config.speed - 14 * (60 / 115)) < .01);

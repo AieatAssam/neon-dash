@@ -39,16 +39,24 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   }
 });
 
-test('200 seeds in both modes retain the forgiving hand-authored opening', () => {
+test('200 seeds in both modes retain varied forgiving openings', () => {
+  const openingKinds = new Set();
+  const gatePhases = new Set();
   for (let seed = 1; seed <= 200; seed++) {
     for (const mode of ['endless', 'challenge']) {
       const game = createGame({ mode, seed, speed: 240, maxSpeed: 240 });
+      const first = [...game.state.obstacles, ...game.state.terrain].sort((a, b) => a.x - b.x)[0];
+      openingKinds.add(first.kind || 'spike');
       const gate = game.state.obstacles.find(o => o.kind === 'gate');
       const terrain = game.state.terrain[0];
-      assert.ok(gate && Math.abs((gate.x - game.config.runnerX) / game.config.speed - 8 * BEAT_SECONDS) < .01, `${mode} gate seed ${seed}`);
-      assert.equal(gate.phase, 0, `${mode} opening gate phase seed ${seed}`);
-      assert.ok(terrain && Math.abs((terrain.x - game.config.runnerX) / game.config.speed - 14 * BEAT_SECONDS) < .01, `${mode} terrain seed ${seed}`);
-      assert.ok(['gap', 'platform'].includes(terrain.kind));
+      if (gate) {
+        assert.ok(Math.abs((gate.x - game.config.runnerX) / game.config.speed - (seed % 2 ? 8 : 12) * BEAT_SECONDS) < .01, `${mode} gate seed ${seed}`);
+        gatePhases.add(gate.phase);
+      }
+      if (terrain) {
+        assert.ok(Math.abs((terrain.x - game.config.runnerX) / game.config.speed - (seed % 2 ? 14 : 8) * BEAT_SECONDS) < .01, `${mode} terrain seed ${seed}`);
+        assert.ok(['gap', 'platform'].includes(terrain.kind));
+      }
     }
     const endless = createGame({ mode: 'endless', seed });
     play(endless, 10);
@@ -57,6 +65,8 @@ test('200 seeds in both modes retain the forgiving hand-authored opening', () =>
     play(ramping, 80);
     assert.equal(ramping.state.status, 'won', `seed ${seed}`);
   }
+  assert.ok(openingKinds.size >= 2, 'opening hazard type varies across seeds');
+  assert.equal(gatePhases.size, 2, 'opening gate phase varies across seeds');
 });
 
 
@@ -80,7 +90,7 @@ test('speed-ramped arrivals stay within one pixel of the beat grid', () => {
   assert.ok(Math.abs(game.state.distance - expectedDistance) < game.state.speed * game.config.fixedStep / 2 + .1);
 });
 
-test('phrases combine jump runs, raised landings, gaps, and alternating gates', () => {
+test('phrases combine jump runs, raised landings, gaps, and spaced gates', () => {
   const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
   const features = new Map();
   for (let second = 0; second < 20; second++) {
@@ -109,7 +119,6 @@ test('phrases combine jump runs, raised landings, gaps, and alternating gates', 
   for (const beat of [28, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
   assert.equal(atBeat(32).kind, 'gate');
   assert.equal(atBeat(36).kind, 'gate');
-  assert.notEqual(atBeat(32).phase, atBeat(36).phase);
   for (const gate of [...features.values()].filter(feature => feature.kind === 'gate')) {
     assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
       `gate at ${gate.x} has a clear approach and exit`);
@@ -130,4 +139,28 @@ test('seeded motif repetitions remain deterministic and vary their jump recipes'
   };
   assert.deepEqual(layout(42), layout(42));
   assert.notDeepEqual(layout(42), layout(71));
+});
+
+
+test('seeded gate phrases include repeated and changing phases with clear approaches', () => {
+  const phasePairs = new Set();
+  for (let seed = 1; seed <= 24; seed++) {
+    const game = createGame({ seed, speed: 240, maxSpeed: 240 });
+    const features = new Map();
+    for (let second = 0; second < 20; second++) {
+      for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
+        features.set(feature.x, { ...feature });
+      }
+      play(game, 1);
+      assert.equal(game.state.status, 'running', `seed ${seed}`);
+    }
+    const gates = [...features.values()].filter(feature => feature.kind === 'gate');
+    const phraseGates = gates.filter(gate => gate.x >= game.config.runnerX + 32 * BEAT_SECONDS * 240);
+    phasePairs.add(phraseGates.slice(0, 2).map(gate => gate.phase).join(''));
+    for (const gate of gates) {
+      assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
+        `clear gate approach seed ${seed}`);
+    }
+  }
+  assert.equal(phasePairs.size, 4, 'both equal-phase and opposite-phase gate pairs occur');
 });

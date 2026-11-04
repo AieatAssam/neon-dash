@@ -10,6 +10,8 @@ For Neon Dash, apply that language with dark architectural silhouettes, crisp il
 
 ## 1. Fun, mastery, and challenge
 
+Research on 2D level-design patterns describes introducing a mechanic in a controlled setting before layering it with familiar challenges. This supports varying an opening's form while retaining a clear first lesson, then returning to that skill in new combinations with recovery space between demanding phrases. [Level Design Patterns in 2D Games](https://ieee-cog.org/2020/papers2019/paper_124.pdf) Procedural variation should be evaluated against an intended difficulty curve rather than random variation alone. [Procedural content and difficulty curves](https://ieeexplore.ieee.org/abstract/document/6633640)
+
 The GameFlow model identifies concentration, challenge, player skill, control, clear goals, feedback, immersion, and social interaction as dimensions associated with enjoyment. For a short-run rhythm platformer, the most immediately actionable dimensions are clear goals, perceived control, rapid feedback, and a challenge that invites practice. Sweetser and Wyeth synthesize these as a design/evaluation model, not a formula that guarantees fun. [Sweetser & Wyeth, “GameFlow” (2005)](https://doi.org/10.1145/1077246.1077253)
 
 **Implications**

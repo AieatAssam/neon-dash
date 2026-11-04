@@ -107,14 +107,18 @@ function extendCourse(game: Game): void {
     const tier = Math.min(6, 2 + Math.floor(scheduledTime / 15));
     const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
     const height = 34 + Math.floor(random(game) * 4) * 4;
-    // The opening introduces one phase change and one terrain jump. After
+    // The opening introduces one phase gate and one terrain jump. After
     // that, complete phrases teach a recognizable action sequence instead of
     // independently rolling every hazard. The seed varies each repetition.
-    const openingGate = game.phraseStart === 8 && game.phraseIndex === 0;
-    const openingTerrain = game.phraseStart === 8 && game.phraseIndex === 1;
+    const opening = game.phraseStart === 8;
+    // Terrain-first seeds put the gate at beat 12, leaving four beats
+    // before the next phrase. Gate-first seeds leave the terrain until 14.
+    const gateFirst = (Number(c.seed) >>> 0) % 2 === 1;
+    const openingGate = opening && game.phraseIndex === (gateFirst ? 0 : 1);
+    const openingTerrain = opening && !openingGate;
     const motif = Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length;
-    const gate = openingGate || motif === 2;
-    const terrain = openingTerrain || motif === 1 || motif === 3 && game.phraseIndex !== 1;
+    const gate = openingGate || !opening && motif === 2;
+    const terrain = openingTerrain || !opening && (motif === 1 || motif === 3 && game.phraseIndex !== 1);
     const groupId = game.nextObstacleGroup++;
     if (terrain) {
       // The terrain phrase teaches a short climb before a gap, then gives a
@@ -143,7 +147,7 @@ function extendCourse(game: Game): void {
     }
     else if (gate) s.obstacles.push({
       x: game.nextCluster, width: 22, height: 180,
-      phase: openingGate ? 0 : game.phraseIndex as Phase, kind: 'gate', groupId,
+      phase: Math.floor(random(game) * 2) as Phase, kind: 'gate', groupId,
     });
     else if (game.phraseStart >= 48 && motif === 0 && game.phraseIndex === 1) {
       s.obstacles.push({ x: game.nextCluster, width: 64, height: 36,
@@ -244,7 +248,7 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     generated: !customLayout,
     randomState: Number(config.seed) >>> 0,
     nextCluster: config.runnerX + courseDistance(config, 8 * BEAT_SECONDS),
-    nextBeat: 8, phraseStart: 8, phrasePattern: [0, 6], phraseIndex: 0,
+    nextBeat: 8, phraseStart: 8, phrasePattern: (Number(config.seed) >>> 0) % 2 === 1 ? [0, 6] : [0, 4], phraseIndex: 0,
     nextObstacleGroup: obstacleCount,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
