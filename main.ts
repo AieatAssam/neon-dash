@@ -190,6 +190,7 @@ function finish() {
 if (import.meta.env.DEV) {
  (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
  (window as any).__setBackdropDistance = (distance: number) => { game.state.distance = distance; renderDirty = true; };
+ (window as any).__setTestTerrain = (terrain: import('./core').Terrain[]) => { game.state.terrain = terrain; renderDirty = true; };
 }
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(); if (mode === 'running') jumpQueued = true; }
@@ -253,9 +254,11 @@ function render(time) {
  const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
  const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
  const palette = ART_PALETTES[Math.floor(game.state.distance / 4800) % ART_PALETTES.length];
- const key = `${canvas.clientWidth}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
+ const key = `${canvas.clientWidth}:${canvas.clientHeight}:${worldOffsetY}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
  if (key !== backdropKey) {
-  canvas.style.background = `radial-gradient(circle ${canvas.clientWidth * .65}px at 65% 48%, ${palette.pink}28 0%, ${palette.blue}0d 48%, ${palette.blue}00 100%), linear-gradient(to bottom, ${palette.top} 0%, ${palette.horizon} 70%, ${palette.floor} 100%)`;
+  const groundPx = (worldOffsetY + c.groundY) * canvas.clientHeight / height;
+  const floorEndPx = (worldOffsetY + height) * canvas.clientHeight / height;
+  canvas.style.background = `linear-gradient(to bottom, transparent ${groundPx}px, ${palette.floor} ${groundPx}px, ${GAMEPLAY_COLORS.void} ${floorEndPx}px), radial-gradient(circle ${canvas.clientWidth * .65}px at 65% 48%, ${palette.pink}28 0%, ${palette.blue}0d 48%, ${palette.blue}00 100%), linear-gradient(to bottom, ${palette.top} 0%, ${palette.horizon} 70%, ${palette.floor} 100%)`;
   backdropKey = key;
  }
  ctx.clearRect(0, 0, width, height);
@@ -303,9 +306,6 @@ function render(time) {
   floorStart = right;
  }
  ctx.rect(floorStart, c.groundY - 2, Math.max(0, worldRight - floorStart), height); ctx.clip();
- const floor = ctx.createLinearGradient(0, c.groundY, 0, height);
- floor.addColorStop(0, palette.floor); floor.addColorStop(1, GAMEPLAY_COLORS.void);
- ctx.fillStyle = floor; ctx.fillRect(0, c.groundY, worldRight, height);
  ctx.strokeStyle = palette.pink + '58'; ctx.lineWidth = 1;
  ctx.beginPath();
  for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); }

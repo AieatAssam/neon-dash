@@ -32,3 +32,31 @@ test('backdrop redraws after a palette change and viewport resize', async ({ pag
   await expect.poll(async () => page.locator('canvas').evaluate(canvas => canvas.height)).toBe(700);
   await expect.poll(async () => (await pixel()).slice(0, 3).some(Boolean)).toBeTruthy();
 });
+
+test('a gap remains dark against the composited floor', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('https://fonts.googleapis.com/**', route => route.abort());
+  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => typeof window.__setTestTerrain === 'function');
+  await page.locator('#overlay').evaluate(el => { el.style.visibility = 'hidden'; });
+  await page.evaluate(() => window.__setTestTerrain([{ kind: 'gap', x: 100, width: 90, height: 0 }]));
+  await page.waitForTimeout(100);
+  const pixelsAt = async y => {
+    const png = await page.screenshot();
+    return page.evaluate(async ({ data, y }) => {
+      const image = new Image(); image.src = `data:image/png;base64,${data}`; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+      return [115, 197].map(x => [...context.getImageData(x,y,1,1).data]);
+    }, { data: png.toString('base64'), y });
+  };
+  const assertGap = pixels => {
+    expect(pixels[0][0]).toBeLessThan(8);
+    expect(pixels[1][0]).toBeGreaterThan(pixels[0][0] + 5);
+  };
+  assertGap(await pixelsAt(550));
+  await page.setViewportSize({ width: 390, height: 700 });
+  await expect.poll(async () => page.locator('canvas').evaluate(canvas => canvas.height)).toBe(700);
+  await expect.poll(async () => (await pixelsAt(460))[1][0]).toBeGreaterThan(8);
+  assertGap(await pixelsAt(460));
+});
