@@ -14,9 +14,7 @@ const $ = (id: string): any => document.getElementById(id);
 const canvas = $('game') as HTMLCanvasElement;
 const surface = canvas;
 const ctx = surface.getContext('2d')!;
-// The backdrop depends only on the viewport and palette, not on game time.
-const backdrop = document.createElement('canvas');
-const backdropCtx = backdrop.getContext('2d')!;
+// The static backdrop is composited by the browser instead of copied into every frame.
 let backdropKey = '';
 // Rasterize repeated bloom at backing-store resolution; outlines are still drawn
 // directly on the main canvas so their edges remain crisp while objects move.
@@ -255,20 +253,12 @@ function render(time) {
  const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
  const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
  const palette = ART_PALETTES[Math.floor(game.state.distance / 4800) % ART_PALETTES.length];
- const key = `${surface.width}:${surface.height}:${width}:${height}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
+ const key = `${canvas.clientWidth}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
  if (key !== backdropKey) {
-  backdrop.width = surface.width; backdrop.height = surface.height;
-  backdropCtx.setTransform(surface.width / width, 0, 0, surface.height / height, 0, 0);
-  const bg = backdropCtx.createLinearGradient(0, 0, 0, height);
-  bg.addColorStop(0, palette.top); bg.addColorStop(.7, palette.horizon); bg.addColorStop(1, palette.floor);
-  backdropCtx.fillStyle = bg; backdropCtx.fillRect(0, 0, width, height);
-  // Broad colored light gives the thin luminous geometry a dark, saturated stage.
-  const halo = backdropCtx.createRadialGradient(width * .65, height * .48, 0, width * .65, height * .48, width * .65);
-  halo.addColorStop(0, palette.pink + '28'); halo.addColorStop(.48, palette.blue + '0d'); halo.addColorStop(1, palette.blue + '00');
-  backdropCtx.fillStyle = halo; backdropCtx.fillRect(0, 0, width, height);
+  canvas.style.background = `radial-gradient(circle ${canvas.clientWidth * .65}px at 65% 48%, ${palette.pink}28 0%, ${palette.blue}0d 48%, ${palette.blue}00 100%), linear-gradient(to bottom, ${palette.top} 0%, ${palette.horizon} 70%, ${palette.floor} 100%)`;
   backdropKey = key;
  }
- ctx.drawImage(backdrop, 0, 0, width, height);
+ ctx.clearRect(0, 0, width, height);
  const cameraX = canvas.clientWidth / canvas.clientHeight < .75 ? Math.min(0, width * .16 - c.runnerX) : 0;
  ctx.save(); ctx.translate(cameraX, worldOffsetY);
  // Monumental rings and angular skylines remain behind the collision silhouettes.

@@ -5,7 +5,20 @@ test('backdrop redraws after a palette change and viewport resize', async ({ pag
   await page.route('https://fonts.googleapis.com/**', route => route.abort());
   await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.__setBackdropDistance === 'function');
-  const pixel = () => page.locator('canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(5, 5, 1, 1).data]);
+  // Sample the composited page: the static gradient is a CSS layer behind the canvas.
+  const pixel = async () => {
+    const png = await page.screenshot();
+    return page.evaluate(async data => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, -5, -5);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    }, png.toString('base64'));
+  };
   await expect.poll(async () => (await pixel()).slice(0, 3).some(Boolean)).toBeTruthy();
   const before = await pixel();
   await page.evaluate(() => window.__setBackdropDistance(4800));
@@ -14,4 +27,8 @@ test('backdrop redraws after a palette change and viewport resize', async ({ pag
   await page.setViewportSize({ width: 430, height: 932 });
   await expect.poll(async () => page.locator('canvas').evaluate(canvas => canvas.width)).toBe(430);
   await expect.poll(pixel).toEqual(changed);
+  // A height-only resize must repaint the composited backdrop as well.
+  await page.setViewportSize({ width: 430, height: 700 });
+  await expect.poll(async () => page.locator('canvas').evaluate(canvas => canvas.height)).toBe(700);
+  await expect.poll(async () => (await pixel()).slice(0, 3).some(Boolean)).toBeTruthy();
 });
