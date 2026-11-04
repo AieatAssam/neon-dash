@@ -97,8 +97,15 @@ test('phrases combine jump runs, raised landings, gaps, and alternating gates', 
   }
   assert.equal(atBeat(24).kind, 'platform');
   assert.equal(atBeat(24).height, 24);
+  assert.equal(atBeat(24).width, 68);
   assert.equal(atBeat(26).kind, 'platform');
   assert.equal(atBeat(26).height, 32, 'terrain phrase climbs to a second platform');
+  for (const beat of [24, 26]) {
+    const ledge = atBeat(beat);
+    const separatingGap = [...features.values()].find(feature => feature.kind === 'gap' && feature.x === ledge.x + ledge.width);
+    assert.ok(separatingGap, `platform at beat ${beat} has an adjoining gap`);
+    assert.equal(separatingGap.width, 40);
+  }
   for (const beat of [28, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
   assert.equal(atBeat(32).kind, 'gate');
   assert.equal(atBeat(36).kind, 'gate');

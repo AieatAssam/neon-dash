@@ -119,11 +119,20 @@ function extendCourse(game: Game): void {
       const platformHeight = climbingPlatform
         ? (game.phraseIndex === 0 ? 24 : 32)
         : 28;
+      if (climbingPlatform) {
+        // A short void directly after each ledge makes the climb require a
+        // takeoff and landing, instead of reading as a pair of raised bumps.
+        const width = 68;
+        const x = game.nextCluster;
+        s.terrain.push({ kind: 'platform', x, width, height: platformHeight });
+        s.terrain.push({ kind: 'gap', x: x + width, width: 40, height: 0 });
+      } else {
       s.terrain.push({
         kind: gap ? 'gap' : 'platform', x: game.nextCluster,
         width: openingTerrain ? (gap ? 90 : 80) : (gap ? 100 : 96),
         height: gap ? 0 : platformHeight,
       });
+      }
     }
     else if (gate) s.obstacles.push({
       x: game.nextCluster, width: 22, height: 180,
