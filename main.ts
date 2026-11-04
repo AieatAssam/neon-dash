@@ -1,7 +1,7 @@
 import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
 import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION, RUNNER_TRAIL_SEGMENTS } from './runner-visuals';
-import { challengeProgress, createGame, step, floorPulseState } from './core';
+import { challengeProgress, createGame, step, floorPulseState, VERTICAL_SECTION_START_X } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
@@ -12,6 +12,8 @@ import { createCheckpoint, restoreCheckpoint, type PracticeCheckpoint } from './
 import { scrollingTiles, blendHex } from './src/art/scrolling-background';
 import { drawShieldMark, SHIELD_CYAN } from './powerup-visuals';
 import { collectShield } from './powerups';
+import { colorWallLayout, drawVerticalSectionVisuals } from './color-wall-visuals';
+import { createVerticalSection, createVerticalSectionCourse } from './vertical-section';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
 
@@ -85,7 +87,7 @@ const startHint = touchControls ? 'Tap PLAY to start' : 'press <kbd>SPACE</kbd> 
 const retryHint = touchControls ? 'Tap to retry' : 'or press <kbd>SPACE</kbd> to restart';
 document.querySelectorAll('.menu-controls').forEach(el => { if (touchControls) el.innerHTML = '<span>Tap to jump</span><span>Tap the colour button to switch</span>'; });
 $('overlayHint').innerHTML = startHint;
-$('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Matching-color beacons pull during jumps.<br>Switch colors to stop the pull; switch to the opposite color to pass gates. Gravity stays down.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
+$('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Switch to the opposite color to pass gates.<br>In the challenge color wall, CYAN pulls LEFT and VIOLET pulls RIGHT. Switch toward the open side to dodge blocks.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
 let vibrationEnabled = true;
 try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
 const vibrationButton = $('vibrationBtn');
@@ -126,8 +128,9 @@ $('viewport').append(phaseButton);
 const phaseHint = document.createElement('span');
 phaseHint.className = 'phase-help';
 phaseHint.hidden = true;
-phaseHint.textContent = touchControls ? 'TAP COLOUR BUTTON TO MATCH BEACON PULL' : 'X / SHIFT · MATCH BEACON COLOR TO FEEL ITS PULL';
+phaseHint.textContent = touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES';
 $('viewport').append(phaseHint);
+const sectionCue = $('sectionCue') as HTMLDivElement;
 function updateBest() {
  $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
  $('best').innerHTML = selectedMode === 'challenge' ? `${progress.challengeBest || 0}<span>%</span>` : `${best}<span>m</span>`;
@@ -182,13 +185,14 @@ function start(newCircuit = false, preserveJumpInput = false) {
  $('attempt').textContent = String(attempt).padStart(2, '0');
  $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
  phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
+ sectionCue.hidden = true;
  updatePracticeControls();
  $('status').textContent = touchControls ? `Attempt ${attempt}. Tap to jump. Tap the colour button to switch.` : `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
  playMusic();
 }
 function pause() {
  if (mode === 'running') { clearJumpInput(); phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); updatePracticeControls(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false; mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); updatePracticeControls(); playMusic(); }
+ else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = Boolean(game.verticalState); phaseButton.classList.toggle('vertical-active', Boolean(game.verticalState)); mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); updatePracticeControls(); playMusic(); }
 }
 function finish() {
  const distance = meters();
@@ -207,7 +211,7 @@ function finish() {
  playSfx(mode === 'won' ? 'win' : 'death');
  music.pause();
  $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
- phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true;
+ phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; sectionCue.hidden = true;
  $('overlayKicker').textContent = activePractice ? 'PRACTICE COMPLETE · NO RECORDS SAVED' : mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
  $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
  $('overlayDescription').innerHTML = activePractice ? `PRACTICE RUN COMPLETE · ${game.state.stats.orbs} ORBS COLLECTED<br>Official records and achievements are unchanged.` : mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `PINK SPIKES ARE ALWAYS DANGEROUS · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
@@ -226,6 +230,18 @@ if (import.meta.env.DEV) {
   renderDirty = true;
  };
  (window as any).__touchTestState = () => ({ phase: game.state.phase, jumps: game.state.stats.jumps, runnerY: game.state.runner.y, jumpHeld });
+ (window as any).__enterVerticalTest = (seed = 1) => {
+  game.verticalObstacles = createVerticalSectionCourse(seed);
+  game.verticalComplete = false;
+  game.verticalState = createVerticalSection({ width: 420, height: 900, obstacles: game.verticalObstacles });
+  game.verticalState.phase = game.state.phase;
+  renderDirty = true;
+ };
+ (window as any).__verticalTestState = () => ({
+  active: Boolean(game.verticalState), complete: game.verticalComplete, phase: game.verticalState?.phase ?? game.state.phase,
+  x: game.verticalState?.x ?? null, y: game.verticalState?.y ?? null,
+  firstSafePhase: game.verticalObstacles.length ? (game.verticalObstacles[0].x === 0 ? 1 : 0) : 0,
+ });
 }
 function meters() { return Math.floor(game.state.distance / 10); }
 function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(false, true); if (mode === 'running') jumpQueued = true; }
@@ -235,6 +251,7 @@ function showTitle() {
  $('overlay').hidden = false; $('pauseOverlay').hidden = true; $('pauseBtn').style.display = 'none';
  $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
  phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; updatePracticeControls();
+ sectionCue.hidden = true;
  runSeed = Math.floor(Math.random() * 0x100000000);
  attempt = 0; $('attempt').textContent = '01';
  game = createGame({ seed: runSeed, mode: selectedMode });
@@ -243,7 +260,7 @@ function showTitle() {
  renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
  $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
  $('overlayTitle').textContent = 'NEON DASH';
- $('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Matching-color beacons pull during jumps.<br>Switch colors to stop the pull; switch to the opposite color to pass gates. Gravity stays down.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
+ $('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Switch to the opposite color to pass gates.<br>In the challenge color wall, CYAN pulls LEFT and VIOLET pulls RIGHT. Switch toward the open side to dodge blocks.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
  $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
  $('overlayHint').innerHTML = startHint; updateBest();
 }
@@ -331,6 +348,38 @@ function render(time) {
   backdropKey = key;
  }
  ctx.clearRect(0, 0, width, height);
+ if (game.verticalState) {
+  sectionCue.hidden = true;
+  $('jumpBtn').hidden = true;
+  phaseButton.hidden = false;
+  phaseHint.hidden = false;
+  phaseHint.textContent = touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE';
+  phaseButton.classList.add('vertical-active');
+  ctx.fillStyle = '#04091a'; ctx.fillRect(0, 0, width, height);
+  const wallLayout = colorWallLayout(width, height);
+  const visibleCourseHeight = wallLayout.height / (wallLayout.width / 420);
+  drawVerticalSectionVisuals(ctx, {
+   width: 420, state: game.verticalState, obstacles: game.verticalObstacles,
+   cameraY: game.verticalState.y - visibleCourseHeight * .25,
+   primaryColor: CYAN, secondaryColor: VIOLET, time: game.state.time, reducedMotion,
+  });
+  const s = game.state;
+  const progress = challengeProgress(s.distance, game.config.runnerX, game.config.finishX);
+  if (Math.floor(progress) !== renderedProgress) { renderedProgress = Math.floor(progress); $('progressFill').style.width = `${renderedProgress}%`; }
+  $('progressText').textContent = `${Math.floor(progress)}%`;
+  $('progressText').setAttribute('aria-label', `Challenge ${Math.floor(progress)} percent complete`);
+  $('levelText').textContent = 'COLOR WALL';
+  $('orbCount').textContent = String(s.stats.orbs);
+  $('shieldIndicator').hidden = s.powerUps.shieldCharges === 0;
+  const phaseName = s.phase === 0 ? 'CYAN' : 'VIOLET';
+  const color = s.phase === 0 ? CYAN : VIOLET;
+  document.documentElement.style.setProperty('--phase', color);
+  phaseButton.dataset.phase = phaseName;
+  phaseButton.innerHTML = touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
+  phaseButton.style.color = color;
+  phaseButton.setAttribute('aria-label', `Switch color. ${phaseName} is active. Switch to move toward the other wall.${touchControls ? '' : ' Keyboard X or Shift.'}`);
+  return;
+ }
  const cameraX = canvas.clientWidth / canvas.clientHeight < .75 ? Math.min(0, width * .16 - c.runnerX) : 0;
  ctx.save(); ctx.translate(cameraX, worldOffsetY);
  // Monumental rings and angular skylines remain behind the collision silhouettes.
@@ -406,31 +455,6 @@ function render(time) {
    ctx.strokeRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
    ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
   }
-  ctx.restore();
- }
- for (const field of s.attractionFields) {
-  const x = field.x - s.distance; if (x < -field.radius - 20 || x > worldRight + field.radius + 20) continue;
-  const fieldColor = field.phase === 0 ? CYAN : VIOLET;
-  const active = field.phase === s.phase;
-  ctx.save(); ctx.translate(x, field.y);
-  ctx.globalAlpha = active ? .82 : .32;
-  ctx.strokeStyle = fieldColor; ctx.fillStyle = fieldColor; ctx.lineWidth = 2;
-  ctx.setLineDash(active ? [7, 5] : [3, 7]);
-  ctx.beginPath(); ctx.arc(0, 0, field.radius, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  ctx.globalAlpha = active ? .12 : .04;
-  ctx.beginPath(); ctx.arc(0, 0, field.radius - 3, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = active ? 1 : .45;
-  ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
-  // Four inward chevrons distinguish an attraction zone from a collision ring.
-  for (const [sx, sy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-   const ax = sx * field.radius * .68, ay = sy * field.radius * .68;
-   ctx.beginPath(); ctx.moveTo(ax + (sx ? -sx : -5), ay + (sy ? -5 : -sy));
-   ctx.lineTo(ax - sx * 8, ay - sy * 8);
-   ctx.lineTo(ax + (sx ? -sx : 5), ay + (sy ? 5 : -sy)); ctx.stroke();
-  }
-  const fieldLabelSize = Math.max(12, 12 * width / canvas.getBoundingClientRect().width);
-  ctx.font = `bold ${fieldLabelSize}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(active ? 'MATCH' : 'OFF', 0, -field.radius - 12);
   ctx.restore();
  }
  for (const obstacle of s.obstacles) {
@@ -586,15 +610,21 @@ function render(time) {
  if (s.stats.orbs !== renderedOrbs) { renderedOrbs = s.stats.orbs; $('orbCount').textContent = String(renderedOrbs); }
  $('shieldIndicator').hidden = s.powerUps.shieldCharges === 0;
  const phaseName=s.phase===0?'CYAN':'VIOLET';
+ $('jumpBtn').hidden = Boolean(game.verticalState) || mode !== 'running';
+ phaseButton.classList.toggle('vertical-active', Boolean(game.verticalState));
+ phaseHint.textContent = game.verticalState
+  ? (touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE')
+  : (touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES');
+ sectionCue.hidden = !(selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState && game.state.distance >= VERTICAL_SECTION_START_X - 1200);
  if (phaseButton.dataset.phase !== phaseName) {
   phaseButton.dataset.phase=phaseName;
   phaseButton.innerHTML=touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
   phaseButton.style.color=color;
-  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Matching beacon colors pull toward the beacon during jumps.${touchControls ? '' : ' Keyboard X or Shift.'}`);
+  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Switch to the opposite color to pass gates.${touchControls ? '' : ' Keyboard X or Shift.'}`);
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasVertical=Boolean(game.verticalState);const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:wasVertical ? false : jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');if (!wasVertical && game.verticalState) { $('status').textContent = 'Color wall section. Switch color to move toward the open side.'; phaseHint.hidden = false; $('jumpBtn').hidden = true; phaseButton.classList.add('vertical-active'); } else if (wasVertical && !game.verticalState) { $('status').textContent = 'Color wall cleared. Horizontal run resumed.'; $('jumpBtn').hidden = false; phaseButton.classList.remove('vertical-active'); }jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
  if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
 }

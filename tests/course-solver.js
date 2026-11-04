@@ -2,6 +2,13 @@
  * the last forty units of each stepping stone as the next takeoff runway. */
 export function courseInput(game) {
   const s = game.state;
+  if (game.verticalState) {
+    const nextWall = game.verticalObstacles.find(obstacle =>
+      obstacle.y + obstacle.height > game.verticalState.y && game.verticalState.y >= obstacle.y - 500,
+    );
+    const safePhase = nextWall ? (nextWall.x === 0 ? 1 : 0) : game.verticalState.phase;
+    return { jump: false, togglePhase: Boolean(nextWall && safePhase !== game.verticalState.phase) };
+  }
   const x = s.distance + s.runner.x;
   const bottom = s.runner.y + s.runner.height;
   const platform = s.terrain.find(t => t.kind === 'platform' && x + s.runner.width > t.x && x < t.x + t.width &&
