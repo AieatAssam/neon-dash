@@ -6,6 +6,9 @@ const port = 5189;
 const warmupFrames = 5;
 const measuredFrames = 20;
 const maxAttempts = 5;
+// Keep a stalled browser/probe from leaving `npm run perf` in the foreground
+// indefinitely. The handler below still runs the normal child/browser cleanup.
+const probeTimeoutMs = 90_000;
 const server = spawn(process.execPath, ['./node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { stdio: 'ignore' });
 let browser;
 let stopping;
@@ -33,6 +36,14 @@ async function stopOnSignal(signal) {
 }
 process.once('SIGTERM', () => { void stopOnSignal('SIGTERM'); });
 process.once('SIGINT', () => { void stopOnSignal('SIGINT'); });
+const watchdog = setTimeout(() => {
+  console.error(`Performance probe timed out after ${probeTimeoutMs}ms`);
+  const forceExit = setTimeout(() => process.exit(124), 3000);
+  void cleanup().finally(() => {
+    clearTimeout(forceExit);
+    process.exit(124);
+  });
+}, probeTimeoutMs);
 
 try {
   let ready = false;
@@ -90,4 +101,5 @@ try {
   await context.close();
 } finally {
   await cleanup();
+  clearTimeout(watchdog);
 }

@@ -283,8 +283,11 @@ function render(time) {
   ctx.fillStyle = palette.blue + '77'; ctx.fillRect(x + 52, c.groundY - h, 4, 4);
  }
  ctx.lineWidth = .7; ctx.strokeStyle = palette.blue + '22';
- for (let x = -(s.distance * .32 % 65); x < width; x += 65) { ctx.beginPath(); ctx.moveTo(x, -worldOffsetY); ctx.lineTo(x, c.groundY); ctx.stroke(); }
- for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); ctx.stroke(); }
+ ctx.beginPath();
+ for (let x = -(s.distance * .32 % 65); x < width; x += 65) { ctx.moveTo(x, -worldOffsetY); ctx.lineTo(x, c.groundY); }
+ ctx.stroke(); ctx.beginPath();
+ for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); }
+ ctx.stroke();
  // Cut holes in the runway so gaps remain legible against the background.
  ctx.save(); ctx.beginPath();
  let floorStart = 0;
@@ -304,8 +307,11 @@ function render(time) {
  floor.addColorStop(0, palette.floor); floor.addColorStop(1, GAMEPLAY_COLORS.void);
  ctx.fillStyle = floor; ctx.fillRect(0, c.groundY, worldRight, height);
  ctx.strokeStyle = palette.pink + '58'; ctx.lineWidth = 1;
- for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.beginPath(); ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); ctx.stroke(); }
- for (let y = c.groundY + 18; y < height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); ctx.stroke(); }
+ ctx.beginPath();
+ for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); }
+ ctx.stroke(); ctx.beginPath();
+ for (let y = c.groundY + 18; y < height; y += 30) { ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); }
+ ctx.stroke();
  // A hot white core and wide bloom make the runway read as emitted light.
  ctx.save();
  drawGlow('floor', 0, c.groundY + .5, worldRight, 0, glowUnit * pulse, color, g => { g.strokeStyle = color; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(worldRight, 0); g.stroke(); });
@@ -344,9 +350,12 @@ function render(time) {
    g.fill(); g.stroke();
   });
   ctx.strokeStyle = active ? oc : GAMEPLAY_COLORS.off;
-  const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
-  fill.addColorStop(0, active ? oc + 'bb' : oc + '16'); fill.addColorStop(1, active ? oc + '18' : oc + '08');
-  ctx.fillStyle = fill; ctx.lineWidth = active ? 2.6 : 1.2;
+  if (!active) {
+   const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
+   fill.addColorStop(0, oc + '16'); fill.addColorStop(1, oc + '08');
+   ctx.fillStyle = fill;
+  }
+  ctx.lineWidth = active ? 2.6 : 1.2;
   ctx.beginPath();
   if (obstacle.kind === 'gate') {
    ctx.rect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
