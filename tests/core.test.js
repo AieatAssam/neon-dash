@@ -234,15 +234,15 @@ test('platforms support landings and punish side impacts', () => {
   assert.equal(landing.state.runner.grounded, true);
 });
 
-test('challenge uses finite seeded generation with a clear finish runway', () => {
+test('long challenge uses finite seeded generation with a clear finish runway', () => {
   const a = createGame({ mode: 'challenge', seed: 17 });
   const b = createGame({ mode: 'challenge', seed: 17 });
   assert.equal(a.endless, false);
-  assert.equal(a.config.finishX, 9000);
+  assert.equal(a.config.finishX, 18000);
   assert.deepEqual(a.state, b.state);
   assert.notDeepEqual(a.state.obstacles, createGame({ mode: 'challenge', seed: 18 }).state.obstacles);
   let maxLive = 0;
-  for (let i = 0; i < 120 * 45 && a.state.status === 'running'; i++) {
+  for (let i = 0; i < 120 * 80 && a.state.status === 'running'; i++) {
     a.state.runner.y = b.state.runner.y = -10000;
     a.state.runner.vy = b.state.runner.vy = 0;
     step(a); step(b);
@@ -254,7 +254,7 @@ test('challenge uses finite seeded generation with a clear finish runway', () =>
   }
   assert.equal(a.state.status, 'won');
   assert.deepEqual(a.state, b.state);
-  assert.ok(a.state.time > 25 && a.state.time < 40);
+  assert.ok(a.state.time > 55 && a.state.time < 75);
   assert.ok(maxLive < 35);
   const time = a.state.time;
   step(a);
@@ -264,7 +264,7 @@ test('challenge uses finite seeded generation with a clear finish runway', () =>
 test('seeded challenges can be completed with timed jumps and phase switches', () => {
   for (const seed of [1, 7, 17, 42, 12345]) {
     const game = createGame({ mode: 'challenge', seed });
-    for (let i = 0; i < 120 * 45 && game.state.status === 'running'; i++) {
+    for (let i = 0; i < 120 * 80 && game.state.status === 'running'; i++) {
       const s = game.state;
       const x = s.distance + s.runner.x;
       const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];

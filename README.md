@@ -2,7 +2,7 @@
 
 [Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
-Neon Dash is a full-screen arcade runner about timing jumps and switching phases. Play a finite Challenge circuit or survive as long as possible in Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid pink spikes in either phase. Seeded obstacle phrases follow the soundtrack's beat and increase in speed. Optional signal orbs, local records, and achievements give each run extra goals.
+Neon Dash is a full-screen arcade runner about timing jumps and switching phases. Play a roughly one-minute Challenge circuit or survive as long as possible in Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid pink spikes in either phase. Seeded obstacle phrases follow the soundtrack's beat and increase in speed. Optional signal orbs, local records, and achievements give each run extra goals.
 
 Cyan shield pickups appear along the course. Collect one to absorb a single spike or gate cluster; it does not protect against gaps, falls, or platform impacts. The HUD shows when a shield is ready.
 

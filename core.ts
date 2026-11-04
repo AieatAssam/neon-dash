@@ -61,6 +61,10 @@ export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
   fixedStep: 1 / 120,
 });
 
+/** Default finite course length (about one minute at the normal speed ramp). */
+export const CHALLENGE_FINISH_X = 18000;
+const FIXED_LAYOUT_FINISH_X = 9000;
+
 // Compact clusters fit under one jump at the slowest speed. The runway
 // between clusters exceeds a full jump plus a generous reaction interval.
 export const CHALLENGE_RECIPES: readonly (readonly (Phase | null)[])[] = Object.freeze([
@@ -206,7 +210,9 @@ function overlaps(a: Box, b: Box): boolean {
  * Layout overrides without a mode retain the original fixed-course behavior. */
 export function createGame(overrides: Partial<GameConfig> = {}): Game {
   const layoutOverride = ["obstacleStartX", "obstacleGap", "obstacleWidth", "obstacleHeight"].some(key => Object.hasOwn(overrides, key));
-  const config = { ...DEFAULT_CONFIG, ...(layoutOverride || overrides.mode === 'challenge' ? { finishX: 9000 } : {}), ...overrides };
+  const config = { ...DEFAULT_CONFIG, ...(overrides.mode === 'challenge'
+    ? { finishX: CHALLENGE_FINISH_X }
+    : layoutOverride ? { finishX: FIXED_LAYOUT_FINISH_X } : {}), ...overrides };
   if ((config.mode === 'challenge' && !Number.isFinite(config.finishX)) || !(config.fixedStep > 0) || !(config.speed >= 0) || !(config.finishX > config.runnerX)) {
     throw new RangeError("Invalid simulation configuration");
   }

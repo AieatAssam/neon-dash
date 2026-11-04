@@ -32,7 +32,7 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   for (const seed of [1, 7, 17, 42, 71, 12345]) {
     for (const speed of [240, 280, 340, null]) {
       const game = createGame({ mode: 'challenge', seed, ...(speed ? { speed, maxSpeed: speed } : {}) });
-      play(game, 45);
+      play(game, 80);
       assert.equal(game.state.status, 'won', `seed ${seed}, speed ${speed}, distance ${game.state.distance}`);
       assert.ok(game.state.stats.orbs >= 3, `collectible path seed ${seed}, speed ${speed}`);
     }
@@ -54,7 +54,7 @@ test('200 seeds in both modes retain the forgiving hand-authored opening', () =>
     play(endless, 10);
     assert.equal(endless.state.status, 'running', `endless seed ${seed}`);
     const ramping = createGame({ mode: 'challenge', seed });
-    play(ramping, 45);
+    play(ramping, 80);
     assert.equal(ramping.state.status, 'won', `seed ${seed}`);
   }
 });
