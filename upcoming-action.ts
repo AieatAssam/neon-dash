@@ -30,7 +30,7 @@ export function upcomingAction(game: Game): UpcomingAction | null {
     const active = obstacle.phase === null || obstacle.phase === s.phase;
     if (obstacle.kind === 'gate') {
       consider(obstacle.x, obstacle.width, active ? `SWITCH TO ${s.phase === 0 ? 'VIOLET' : 'CYAN'}` : 'GATE · PASS', active ? 'switch' : 'pass');
-    } else if (active) consider(obstacle.x, obstacle.width, 'JUMP', 'jump');
+    } else if (active) consider(obstacle.x, obstacle.width, obstacle.kind === 'pulse' ? 'JUMP · FLOOR PULSE' : 'JUMP', 'jump');
   }
   for (const terrain of s.terrain) {
     consider(terrain.x, terrain.width, terrain.kind === 'gap' ? 'JUMP · GAP' : 'JUMP · PLATFORM', 'jump');

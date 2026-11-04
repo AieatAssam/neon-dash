@@ -1,7 +1,7 @@
 import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
 import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION, RUNNER_TRAIL_SEGMENTS } from './runner-visuals';
-import { challengeProgress, createGame, step } from './core';
+import { challengeProgress, createGame, step, floorPulseState } from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
@@ -411,6 +411,30 @@ function render(time) {
  for (const obstacle of s.obstacles) {
   if (obstacle.shielded) continue;
   const x = obstacle.x - s.distance; if (x < -60 || x > worldRight + 60) continue;
+  if (obstacle.kind === 'pulse') {
+   const pulseState = floorPulseState(obstacle, s.time);
+   const warning = pulseState === 'warning';
+   const active = pulseState === 'active';
+   ctx.save();
+   ctx.strokeStyle = GAMEPLAY_COLORS.danger;
+   ctx.fillStyle = active || warning ? GAMEPLAY_COLORS.danger : GAMEPLAY_COLORS.off;
+   ctx.lineWidth = 2;
+   ctx.globalAlpha = active || warning ? 1 : .55;
+   ctx.fillRect(x, c.groundY - (active ? obstacle.height : 4), obstacle.width, active ? obstacle.height : 4);
+   if (active) {
+    ctx.strokeStyle = GAMEPLAY_COLORS.white;
+    ctx.strokeRect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
+   } else if (warning) {
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
+    ctx.setLineDash([]);
+    const labelSize = Math.max(12, 12 * viewportMetrics.width / canvas.getBoundingClientRect().width);
+    ctx.font = `bold ${labelSize}px sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText('JUMP ↑', x + obstacle.width / 2, c.groundY - obstacle.height - 8);
+   }
+   ctx.restore();
+   continue;
+  }
   const neutral = obstacle.phase == null;
   const active = neutral || obstacle.phase === s.phase; const oc = neutral ? GAMEPLAY_COLORS.danger : obstacle.phase === 0 ? CYAN : VIOLET;
   ctx.save(); ctx.globalAlpha = 1; if (!active) ctx.setLineDash([4, 3]);

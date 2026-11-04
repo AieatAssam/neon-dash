@@ -22,7 +22,7 @@ export interface GameConfig {
 export interface Box { x: number; y: number; width: number; height: number }
 export interface Obstacle {
   x: number; width: number; height: number; phase: Phase | null;
-  kind?: 'spike' | 'gate'; cleared?: boolean; groupId?: number; shielded?: boolean;
+  kind?: 'spike' | 'gate' | 'pulse'; pulseTime?: number; cleared?: boolean; groupId?: number; shielded?: boolean;
 }
 export interface RunStats { jumps: number; switches: number; cleared: number; neutralCleared: number; orbs: number }
 export interface Collectible { x: number; y: number; radius: number }
@@ -145,6 +145,10 @@ function extendCourse(game: Game): void {
       x: game.nextCluster, width: 22, height: 180,
       phase: openingGate ? 0 : game.phraseIndex as Phase, kind: 'gate', groupId,
     });
+    else if (game.phraseStart >= 48 && motif === 0 && game.phraseIndex === 1) {
+      s.obstacles.push({ x: game.nextCluster, width: 64, height: 36,
+        phase: null, kind: 'pulse', pulseTime: scheduledTime, groupId });
+    }
     else recipe.forEach((phase, i) => s.obstacles.push({
       x: game.nextCluster + i * 28, width: 26, height, phase, groupId,
     }));
@@ -199,6 +203,15 @@ function extendCourse(game: Game): void {
     if (pickup.x + pickup.radius >= s.distance - 100) s.shieldPickups[write++] = pickup;
   }
   s.shieldPickups.length = write;
+}
+
+/** A one-beat warning precedes a solid, half-second floor burst.
+ * Rendering and collision share this state; simulation time also freezes on pause. */
+export function floorPulseState(obstacle: Obstacle, time: number): 'dormant' | 'warning' | 'active' {
+  const arrival = obstacle.pulseTime ?? 0;
+  if (time >= arrival - .25 && time < arrival + .3) return 'active';
+  if (time >= arrival - .25 - BEAT_SECONDS && time < arrival - .25) return 'warning';
+  return 'dormant';
 }
 
 function overlaps(a: Box, b: Box): boolean {
@@ -329,13 +342,14 @@ export function step(game: Game, input: Input = {}): GameState {
       obstacle.cleared = true; s.stats.cleared++;
       if (obstacle.phase === null) s.stats.neutralCleared++;
     }
+    if (obstacle.kind === 'pulse' && floorPulseState(obstacle, s.time) !== 'active') continue;
     if (obstacle.phase !== null && obstacle.phase !== s.phase) continue;
     const box = { x: obstacle.x, y: c.groundY - obstacle.height, width: obstacle.width, height: obstacle.height };
     // At the bottom edge of the runner the triangle is widest.
     const depth = Math.min(box.height, runnerBox.y + runnerBox.height - box.y);
     const halfWidth = box.width * Math.max(0, depth) / (2 * box.height);
     const slice = { x: box.x + box.width / 2 - halfWidth, y: box.y, width: 2 * halfWidth, height: box.height };
-    if (overlaps(collisionBox, obstacle.kind === 'gate' ? box : slice)) {
+    if (overlaps(collisionBox, obstacle.kind === 'gate' || obstacle.kind === 'pulse' ? box : slice)) {
       const result = resolveCollision(s.powerUps, true);
       if (result.absorbed) {
         s.powerUps = result.state;
