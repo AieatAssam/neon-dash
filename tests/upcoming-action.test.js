@@ -64,3 +64,21 @@ test('safe gate cue remains until the whole runner clears it', () => {
   game.state.distance = 37;
   assert.equal(upcomingAction(game)?.label, 'SWITCH TO VIOLET');
 });
+
+test('continuous crossing cues the next supporting platform edge', () => {
+  const game = fixture();
+  game.state.terrain = [
+    { kind: 'gap', x: 332, width: 698, height: 0 },
+    { kind: 'platform', x: 460, width: 170, height: 28 },
+    { kind: 'platform', x: 760, width: 170, height: 18 },
+  ];
+  for (const [x, height, edge] of [[480, 28, 630], [780, 18, 930]]) {
+    game.state.distance = x - game.state.runner.x;
+    game.state.runner.y = game.config.groundY - height - game.state.runner.height;
+    const cue = upcomingAction(game);
+    assert.equal(cue.label, 'JUMP · GAP');
+    assert.ok(Math.abs(cue.seconds - (edge - 40 - x) / 340) < .001);
+    game.state.distance += edge - 40 - x;
+    assert.equal(upcomingAction(game).seconds, 0, 'takeoff cue reaches zero near the ledge');
+  }
+});

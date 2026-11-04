@@ -1,19 +1,27 @@
+import { courseInput } from './course-solver.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, step } from '../core.ts';
 import { BEAT_SECONDS } from '../rhythm.ts';
 
 function play(game, seconds) {
+  const crossings = new Set();
+  const stones = new Set();
   for (let i = 0; i < 120 * seconds && game.state.status === 'running'; i++) {
     const s = game.state;
-    const x = s.distance + s.runner.x;
-    const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a,b) => a.x-b.x)[0];
-    const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
-    step(game, {
-      jump: Boolean(next && next.kind !== 'gate' && next.x - x < s.speed * .19 && s.runner.grounded),
-      togglePhase: Boolean(gate && gate.x - x < s.speed * .6 && gate.phase === s.phase),
-    });
+    for (const gap of s.terrain.filter(t => t.kind === 'gap' && t.width === 698)) {
+      crossings.add(gap.x);
+      for (const stoneX of [gap.x + 128, gap.x + 428]) {
+        const stone = s.terrain.find(t => t.kind === 'platform' && Math.abs(t.x - stoneX) < .001);
+        if (stone && s.runner.grounded && Math.abs(s.runner.y + s.runner.height - (game.config.groundY - stone.height)) < .01 &&
+          s.distance + s.runner.x >= stone.x - s.runner.width && s.distance + s.runner.x < stone.x + stone.width) stones.add(stoneX);
+      }
+      for (const field of s.attractionFields) assert.ok(field.x + field.radius < gap.x - 342 || field.x - field.radius > gap.x + gap.width + 160,
+        'attraction cannot alter the required crossing arc');
+    }
+    step(game, courseInput(game));
   }
+  return { crossings, stones };
 }
 
 test('generated cluster arrivals follow the track beat at varied speeds', () => {
@@ -32,7 +40,9 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   for (const seed of [1, 7, 17, 42, 71, 12345]) {
     for (const speed of [240, 280, 340, null]) {
       const game = createGame({ mode: 'challenge', seed, ...(speed ? { speed, maxSpeed: speed } : {}) });
-      play(game, 80);
+      const route = play(game, 80);
+      assert.ok(route.crossings.size >= 1, 'production course emits long crossings');
+      assert.ok(route.stones.size >= route.crossings.size * 2, 'solver lands on both stones in each generated crossing');
       assert.equal(game.state.status, 'won', `seed ${seed}, speed ${speed}, distance ${game.state.distance}`);
       assert.ok(game.state.stats.orbs >= 3, `collectible path seed ${seed}, speed ${speed}`);
     }
@@ -101,24 +111,20 @@ test('phrases combine jump runs, raised landings, gaps, and spaced gates', () =>
     assert.equal(game.state.status, 'running');
   }
   const atBeat = beat => features.get(game.config.runnerX + beat * BEAT_SECONDS * 240);
-  for (const beat of [16, 18, 20, 22, 42]) {
+  for (const beat of [16, 18, 20, 22, 44]) {
     const feature = atBeat(beat);
     assert.ok(feature && !feature.kind, `spike cluster at beat ${beat}`);
   }
-  assert.equal(atBeat(24).kind, 'platform');
-  assert.equal(atBeat(24).height, 24);
-  assert.equal(atBeat(24).width, 68);
-  assert.equal(atBeat(26).kind, 'platform');
-  assert.equal(atBeat(26).height, 32, 'terrain phrase climbs to a second platform');
-  for (const beat of [24, 26]) {
-    const ledge = atBeat(beat);
-    const separatingGap = [...features.values()].find(feature => feature.kind === 'gap' && feature.x === ledge.x + ledge.width);
-    assert.ok(separatingGap, `platform at beat ${beat} has an adjoining gap`);
-    assert.equal(separatingGap.width, 40);
-  }
-  for (const beat of [28, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
-  assert.equal(atBeat(32).kind, 'gate');
-  assert.equal(atBeat(36).kind, 'gate');
+  const origin = game.config.runnerX + 24 * BEAT_SECONDS * 240 - 90;
+  const crossing = [...features.values()].filter(t => t.x >= origin && t.x <= origin + 1030);
+  const gap = crossing.find(t => t.kind === 'gap' && t.width === 698);
+  assert.ok(gap, 'terrain phrase contains a continuous long void');
+  assert.deepEqual(crossing.filter(t => t.kind === 'platform').map(t => [Math.round(t.x - origin), t.height]),
+    [[132, 18], [460, 28], [760, 18]]);
+  assert.ok(atBeat(42).kind === 'gap' && atBeat(46).kind === 'gap');
+  assert.equal(atBeat(34).kind, 'gate');
+  assert.equal(atBeat(38).kind, 'gate');
+  assert.ok(atBeat(34).x - (gap.x + gap.width) >= 278, 'clear ground after void before gate');
   for (const gate of [...features.values()].filter(feature => feature.kind === 'gate')) {
     assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
       `gate at ${gate.x} has a clear approach and exit`);

@@ -1,3 +1,4 @@
+import { courseInput } from './course-solver.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { advance, createGame, step } from "../core.ts";
@@ -188,12 +189,7 @@ test("generated recipes remain safe with deliberate jumps and gate switches", ()
     for (let i = 0; i < 120 * 100 && game.state.status === "running"; i++) {
       const s = game.state;
       for (const terrain of s.terrain) terrainKinds.add(terrain.kind);
-      const x = s.distance + s.runner.x;
-      const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];
-      const jump = Boolean(next && next.x - x < speed * .19 && s.runner.grounded);
-      const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
-      const togglePhase = Boolean(gate && gate.x - x < speed * .6 && gate.phase === s.phase);
-      step(game, { jump, togglePhase });
+      step(game, courseInput(game));
     }
     assert.equal(game.state.status, "running", `speed ${speed}, distance ${game.state.distance}`);
     assert.ok(game.state.stats.jumps > 30);
@@ -322,14 +318,7 @@ test('seeded challenges can be completed with timed jumps and phase switches', (
   for (const seed of [1, 7, 17, 42, 12345]) {
     const game = createGame({ mode: 'challenge', seed });
     for (let i = 0; i < 120 * 80 && game.state.status === 'running'; i++) {
-      const s = game.state;
-      const x = s.distance + s.runner.x;
-      const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];
-      const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
-      step(game, {
-        jump: Boolean(next && next.x - x < s.speed * .19 && s.runner.grounded),
-        togglePhase: Boolean(gate && gate.x - x < s.speed * .6 && gate.phase === s.phase),
-      });
+      step(game, courseInput(game));
     }
     assert.equal(game.state.status, 'won', `seed ${seed}, distance ${game.state.distance}`);
     assert.ok(game.state.stats.jumps > 10);

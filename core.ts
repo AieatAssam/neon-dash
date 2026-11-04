@@ -1,4 +1,5 @@
 import { BEAT_SECONDS } from './rhythm';
+import { longGapCrossingAt } from './long-gap-crossing';
 import { collectShield, createPowerUpState, resolveCollision, type PowerUpState } from './powerups';
 import { colorAttractionAcceleration, type ColorAttractionField } from './color-attraction';
 
@@ -79,8 +80,8 @@ export const CHALLENGE_RECIPES: readonly (readonly (Phase | null)[])[] = Object.
 export const LEVEL_SECTIONS = Object.freeze([
   Object.freeze({ name: 'jump run', beats: Object.freeze([0, 2, 4, 6]) }),
   Object.freeze({ name: 'terrain run', beats: Object.freeze([0, 2, 4]) }),
-  Object.freeze({ name: 'phase exchange', beats: Object.freeze([0, 4]) }),
-  Object.freeze({ name: 'mixed run', beats: Object.freeze([0, 2, 6]) }),
+  Object.freeze({ name: 'phase exchange', beats: Object.freeze([2, 6]) }),
+  Object.freeze({ name: 'mixed run', beats: Object.freeze([2, 4, 6]) }),
 ]);
 
 function random(game: Game): number {
@@ -121,30 +122,25 @@ function extendCourse(game: Game): void {
     const gate = openingGate || !opening && motif === 2;
     const terrain = openingTerrain || !opening && (motif === 1 || motif === 3 && game.phraseIndex !== 1);
     const groupId = game.nextObstacleGroup++;
-    if (terrain) {
-      // The terrain phrase teaches a short climb before a gap, then gives a
-      // full four-beat approach to the next gate. Heights stay low enough to
-      // clear from the ground and land safely when approached with a jump.
-      // Mixed runs bookend their spike cluster with single-jump-width gaps.
-      const climbingPlatform = !openingTerrain && motif === 1 && game.phraseIndex < 2;
-      const gap = openingTerrain ? random(game) < .5 : motif === 3 || motif === 1 && game.phraseIndex === 2;
-      const platformHeight = climbingPlatform
-        ? (game.phraseIndex === 0 ? 24 : 32)
-        : 28;
-      if (climbingPlatform) {
-        // A short void directly after each ledge makes the climb require a
-        // takeoff and landing, instead of reading as a pair of raised bumps.
-        const width = 68;
-        const x = game.nextCluster;
-        s.terrain.push({ kind: 'platform', x, width, height: platformHeight });
-        s.terrain.push({ kind: 'gap', x: x + width, width: 40, height: 0 });
-      } else {
+    const crossing = !opening && motif === 1;
+    if (crossing) {
+      // Reserve the entire phrase for a continuous void and its stepping
+      // stones. The next phrase starts its gates two beats late, leaving
+      // at least 312 units of clear ground after the crossing at speed 240.
+      if (game.nextCluster + 1140 <= c.finishX) {
+        s.terrain.push(...longGapCrossingAt(game.nextCluster - 90));
+        // Keep every required takeoff independent of the player's color.
+        s.attractionFields = s.attractionFields.filter(field =>
+          field.x + field.radius < game.nextCluster - 100 || field.x - field.radius > game.nextCluster + 1100);
+      }
+      game.phraseIndex = game.phrasePattern.length - 1;
+    } else if (terrain) {
+      const gap = openingTerrain ? random(game) < .5 : true;
       s.terrain.push({
         kind: gap ? 'gap' : 'platform', x: game.nextCluster,
-        width: openingTerrain ? (gap ? 90 : 80) : (gap ? 100 : 96),
-        height: gap ? 0 : platformHeight,
+        width: openingTerrain ? (gap ? 90 : 80) : 100,
+        height: gap ? 0 : 28,
       });
-      }
     }
     else if (gate) s.obstacles.push({
       x: game.nextCluster, width: 22, height: 180,
@@ -186,7 +182,9 @@ function extendCourse(game: Game): void {
   // tutorial. The first beacon is deliberately on a clear runway; later ones
   // are deterministic and spaced far enough apart that their forces cannot stack.
   while (game.nextAttractionX < Math.min(s.distance + 2400, c.finishX - 180)) {
-    s.attractionFields.push({
+    const intersectsCrossing = s.terrain.some(t => t.kind === 'gap' && t.width === 698 &&
+      game.nextAttractionX + 180 >= t.x - 342 && game.nextAttractionX - 180 <= t.x + t.width + 160);
+    if (!intersectsCrossing) s.attractionFields.push({
       x: game.nextAttractionX,
       y: c.groundY - 130,
       radius: 180,

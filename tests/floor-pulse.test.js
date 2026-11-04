@@ -1,3 +1,4 @@
+import { courseInput } from './course-solver.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, floorPulseState, step } from '../core.ts';
@@ -32,17 +33,11 @@ test('seeded runs expose beat-aligned pulses and a simple jump solver clears the
       let seen = false;
       for (let i = 0; i < 120 * 80 && game.state.status === 'running'; i++) {
         const s = game.state;
-        const x = s.distance + s.runner.x;
         for (const obstacle of s.obstacles.filter(o => o.kind === 'pulse')) {
           seen = true;
           assert.ok(Math.abs(obstacle.pulseTime / BEAT_SECONDS - Math.round(obstacle.pulseTime / BEAT_SECONDS)) < 1e-8);
         }
-        const next = [...s.obstacles, ...s.terrain].filter(o => o.x + o.width > x - 3).sort((a, b) => a.x - b.x)[0];
-        const gate = s.obstacles.find(o => o.kind === 'gate' && o.x + o.width > x);
-        step(game, {
-          jump: Boolean(next && next.kind !== 'gate' && next.x - x < s.speed * .19 && s.runner.grounded),
-          togglePhase: Boolean(gate && gate.x - x < s.speed * .6 && gate.phase === s.phase),
-        });
+        step(game, courseInput(game));
       }
       assert.ok(seen, `seed ${seed}, speed ${speed} contains a pulse`);
       assert.equal(game.state.status, 'won', `seed ${seed}, speed ${speed}`);
