@@ -66,7 +66,15 @@ export const CHALLENGE_RECIPES: readonly (readonly (Phase | null)[])[] = Object.
   Object.freeze([null, null]), Object.freeze([0, 1]),
   Object.freeze([1, null]), Object.freeze([null, 0, 1]),
 ]);
-export const LEVEL_SECTIONS = Object.freeze([]);
+/** Eight-beat motifs repeat as the speed rises, making the course readable.
+ * Gate phrases leave four beats between switches; jump phrases leave at least
+ * two beats between takeoffs, including at phrase boundaries. */
+export const LEVEL_SECTIONS = Object.freeze([
+  Object.freeze({ name: 'jump run', beats: Object.freeze([0, 2, 4, 6]) }),
+  Object.freeze({ name: 'terrain run', beats: Object.freeze([0, 2, 4]) }),
+  Object.freeze({ name: 'phase exchange', beats: Object.freeze([0, 4]) }),
+  Object.freeze({ name: 'mixed run', beats: Object.freeze([0, 2, 6]) }),
+]);
 
 function random(game: Game): number {
   game.randomState = (game.randomState + 0x6D2B79F5) >>> 0;
@@ -85,10 +93,6 @@ function courseDistance(config: GameConfig, time: number): number {
     Math.max(0, time - capTime) * config.maxSpeed;
 }
 
-const PHRASE_PATTERNS: readonly (readonly number[])[] = [
-  [0, 4], [0, 2, 4, 6], [0, 3, 6], [0, 2, 6],
-];
-
 function extendCourse(game: Game): void {
   const s = game.state;
   const c = game.config;
@@ -97,20 +101,29 @@ function extendCourse(game: Game): void {
     const tier = Math.min(6, 2 + Math.floor(scheduledTime / 15));
     const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
     const height = 34 + Math.floor(random(game) * 4) * 4;
-    // Sparse phrases leave four beats on either side of a gate. A gate
-    // requests a single phase change without a competing jump requirement.
-    // The first two arrivals are a hand-authored tutorial: a single phase
-    // gate at beat 8, followed by a small terrain lesson at beat 14. Both
-    // remain on the same musical grid as the generated course.
+    // The opening introduces one phase change and one terrain jump. After
+    // that, complete phrases teach a recognizable action sequence instead of
+    // independently rolling every hazard. The seed varies each repetition.
     const openingGate = game.phraseStart === 8 && game.phraseIndex === 0;
     const openingTerrain = game.phraseStart === 8 && game.phraseIndex === 1;
-    const gate = openingGate || (tier >= 3 && game.phrasePattern.length === 2 && game.phraseIndex === 1 && random(game) < .65);
-    const terrain = !gate && (openingTerrain || (tier >= 3 && random(game) < .3));
+    const motif = Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length;
+    const gate = openingGate || motif === 2;
+    const terrain = openingTerrain || motif === 1 && game.phraseIndex < 2 || motif === 3 && game.phraseIndex !== 1;
     if (terrain) {
-      const gap = random(game) < .5;
-      s.terrain.push({ kind: gap ? 'gap' : 'platform', x: game.nextCluster, width: gap ? 90 : 80, height: gap ? 0 : 28 });
+      // Terrain runs finish by beat four to leave a full four-beat approach
+      // to the next phase gate. Mixed runs bookend
+      // their spike cluster with gaps; each feature is a single-jump width.
+      const gap = openingTerrain ? random(game) < .5 : motif === 3 || game.phraseIndex === 1;
+      s.terrain.push({
+        kind: gap ? 'gap' : 'platform', x: game.nextCluster,
+        width: openingTerrain ? (gap ? 90 : 80) : (gap ? 100 : 96),
+        height: gap ? 0 : 28,
+      });
     }
-    else if (gate) s.obstacles.push({ x: game.nextCluster, width: 22, height: 180, phase: openingGate ? 0 : (random(game) < .5 ? 0 : 1), kind: 'gate' });
+    else if (gate) s.obstacles.push({
+      x: game.nextCluster, width: 22, height: 180,
+      phase: openingGate ? 0 : game.phraseIndex as Phase, kind: 'gate',
+    });
     else recipe.forEach((phase, i) => s.obstacles.push({
       x: game.nextCluster + i * 28, width: 26, height, phase,
     }));
@@ -125,9 +138,7 @@ function extendCourse(game: Game): void {
     if (game.phraseIndex >= game.phrasePattern.length) {
       game.phraseStart += 8;
       game.phraseIndex = 0;
-      // The opening stays sparse. Later eight-beat phrases vary in density
-      // while their boundary and all arrivals remain on the same beat grid.
-      game.phrasePattern = PHRASE_PATTERNS[Math.floor(random(game) * (game.phraseStart < 16 ? 1 : PHRASE_PATTERNS.length))];
+      game.phrasePattern = LEVEL_SECTIONS[Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length].beats;
     }
     game.nextBeat = game.phraseStart + game.phrasePattern[game.phraseIndex];
     game.nextCluster = c.runnerX + courseDistance(c, game.nextBeat * BEAT_SECONDS);

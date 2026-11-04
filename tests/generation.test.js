@@ -79,3 +79,45 @@ test('speed-ramped arrivals stay within one pixel of the beat grid', () => {
   // Sampling uncertainty is at most half a fixed step of travel.
   assert.ok(Math.abs(game.state.distance - expectedDistance) < game.state.speed * game.config.fixedStep / 2 + .1);
 });
+
+test('phrases combine jump runs, raised landings, gaps, and alternating gates', () => {
+  const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
+  const features = new Map();
+  for (let second = 0; second < 20; second++) {
+    for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
+      features.set(feature.x, { ...feature });
+    }
+    play(game, 1);
+    assert.equal(game.state.status, 'running');
+  }
+  const atBeat = beat => features.get(game.config.runnerX + beat * BEAT_SECONDS * 240);
+  for (const beat of [16, 18, 20, 22, 28, 42]) {
+    const feature = atBeat(beat);
+    assert.ok(feature && !feature.kind, `spike cluster at beat ${beat}`);
+  }
+  assert.equal(atBeat(24).kind, 'platform');
+  for (const beat of [26, 40, 46]) assert.equal(atBeat(beat).kind, 'gap');
+  assert.equal(atBeat(32).kind, 'gate');
+  assert.equal(atBeat(36).kind, 'gate');
+  assert.notEqual(atBeat(32).phase, atBeat(36).phase);
+  for (const gate of [...features.values()].filter(feature => feature.kind === 'gate')) {
+    assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
+      `gate at ${gate.x} has a clear approach and exit`);
+  }
+});
+
+test('seeded motif repetitions remain deterministic and vary their jump recipes', () => {
+  const layout = seed => {
+    const game = createGame({ seed, speed: 240, maxSpeed: 240 });
+    const features = new Map();
+    for (let second = 0; second < 25; second++) {
+      for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
+        features.set(feature.x, { ...feature, cleared: undefined });
+      }
+      play(game, 1);
+    }
+    return [...features.values()];
+  };
+  assert.deepEqual(layout(42), layout(42));
+  assert.notDeepEqual(layout(42), layout(71));
+});
