@@ -2,9 +2,11 @@
 
 [Play Neon Dash](https://aieatassam.github.io/neon-dash/)
 
-Neon Dash is a full-screen arcade runner about timing jumps and switching phases. Play a roughly one-minute Challenge circuit or survive as long as possible in Endless mode. Jump over spikes and gaps, land on platforms, switch phase to pass through opposite-color gates, and avoid pink spikes in either phase. Seeded obstacle phrases follow the soundtrack's beat and increase in speed. Optional signal orbs, local records, and achievements give each run extra goals.
+Neon Dash is a synthwave one-button platformer about rhythm jumps and color switching. Clear a ~minute **Challenge** to the finish, or push your best distance in **Endless** mode. Jump spikes and gaps, land on platforms, switch phase to pass opposite-color gates, and treat pink spikes as always lethal. Seeded phrases follow the beat as speed rises; orbs, shields, records, and achievements keep each run interesting.
 
-In Challenge, the course turns into a vertical color-wall run: cyan pulls left and violet pulls right. Switch colors to steer around the pink barriers. Long gaps vary between circuits and offer bonus orbs along their platform jumps.
+Midway through Challenge, the run **rotates into a vertical color wall**: cyan pulls left, violet pulls right. A glowing portal, slow-mo warp, and in-run tutorial ease the transition; telegraphed gates and a safe runway help first-timers survive the switch. Long gaps vary by seed and hide bonus orbs along stepping-stone jumps.
+
+_Inspired by the one-button rhythm platformer genre and [Geometry Dash](https://geometrydash.fandom.com/wiki/Geometry_Dash) — not affiliated with RobTop Games._
 
 Cyan shield pickups appear along the course. Collect one to absorb a single spike or gate cluster; it does not protect against gaps, falls, or platform impacts. The HUD shows when a shield is ready.
 
@@ -31,6 +33,10 @@ Neon Dash is an independent project inspired by the broad one-button rhythm-plat
 
 ## Media
 
-![Neon Dash gameplay](docs/media/gameplay.png)
+![Neon Dash gameplay — neon runway and HUD](docs/media/gameplay.png)
 
-[Watch a short gameplay clip](docs/media/gameplay.webm).
+[Watch a short gameplay clip](docs/media/gameplay.webm)
+
+| Challenge color wall (portrait) | Opening run (portrait) |
+| --- | --- |
+| ![Color wall section](docs/media/color-wall-390.png) | ![First 20 seconds](docs/media/opening-390.png) |

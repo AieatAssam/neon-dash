@@ -10,6 +10,8 @@ export interface VerticalObstacle {
   y: number;
   width: number;
   height: number;
+  /** Decorative gates and arrows — never collide. */
+  passive?: boolean;
 }
 
 export interface VerticalSectionConfig {
@@ -43,11 +45,16 @@ export const VERTICAL_SECTION_DT = 1 / 120;
 
 /** Readable course layout: alternate a blocked side and a safe side, with a
  * clear center transition zone so every obstacle has a viable color route. */
+export const VERTICAL_FIRST_LETHAL_Y = 850;
+/** Minimum travel after entry before the first blocking gate. */
+export const VERTICAL_SAFE_RUNWAY_Y = 720;
+
 export const VERTICAL_SECTION_OBSTACLES: readonly VerticalObstacle[] = Object.freeze([
-  Object.freeze({ x: 190, y: 190, width: 230, height: 46 }),
-  Object.freeze({ x: 0, y: 390, width: 220, height: 46 }),
-  Object.freeze({ x: 190, y: 590, width: 230, height: 46 }),
-  Object.freeze({ x: 0, y: 790, width: 220, height: 46 }),
+  Object.freeze({ x: 95, y: 480, width: 230, height: 36, passive: true }),
+  Object.freeze({ x: 190, y: VERTICAL_FIRST_LETHAL_Y, width: 230, height: 46 }),
+  Object.freeze({ x: 0, y: 1330, width: 220, height: 46 }),
+  Object.freeze({ x: 190, y: 1780, width: 230, height: 46 }),
+  Object.freeze({ x: 0, y: 2280, width: 220, height: 46 }),
 ]);
 
 /** Seeded, repeatable course variation. Each gate independently chooses a
@@ -58,16 +65,21 @@ export function createVerticalSectionCourse(seed: number, count = 5): readonly V
     value = (value * 1664525 + 1013904223) >>> 0;
     return value / 0x100000000;
   };
-  const obstacles: VerticalObstacle[] = [];
+  const obstacles: VerticalObstacle[] = [
+    { x: 95, y: 500, width: 230, height: 38, passive: true },
+  ];
+  let gateY = VERTICAL_FIRST_LETHAL_Y;
   for (let i = 0; i < count; i++) {
     const blockedLeft = next() < 0.5;
-    const height = 42 + Math.floor(next() * 15);
+    const height = 40 + Math.floor(next() * 12);
+    const spacing = i < 2 ? 460 + Math.floor(next() * 40) : 560 + Math.floor(next() * 80);
     obstacles.push({
       x: blockedLeft ? 0 : 190,
-      y: 300 + i * 600,
+      y: gateY,
       width: 230,
       height,
     });
+    gateY += height + spacing;
   }
   return Object.freeze(obstacles.map(obstacle => Object.freeze(obstacle)));
 }
@@ -110,6 +122,7 @@ export function stepVerticalSection(
   const y = state.y + speed * dt;
   const obstacles = config.obstacles ?? [];
   const crashed = obstacles.some(obstacle =>
+    !obstacle.passive &&
     x + radius > obstacle.x && x - radius < obstacle.x + obstacle.width &&
     y + radius > obstacle.y && y - radius < obstacle.y + obstacle.height,
   );

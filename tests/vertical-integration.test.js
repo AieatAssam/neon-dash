@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, step, VERTICAL_SECTION_START_X } from '../core.ts';
+import { createGame, step, VERTICAL_SECTION_START_X, VERTICAL_PORTAL_X, VERTICAL_WARP_SECONDS } from '../core.ts';
 import { createCheckpoint, restoreCheckpoint } from '../practice.ts';
 
 function enterVertical(game) {
@@ -11,7 +11,8 @@ function enterVertical(game) {
   game.state.runner.grounded = true;
   game.state.runner.y = game.config.groundY - game.state.runner.height;
   game.state.distance = VERTICAL_SECTION_START_X;
-  step(game);
+  const warpSteps = Math.ceil(VERTICAL_WARP_SECONDS / game.config.fixedStep) + 4;
+  for (let i = 0; i < warpSteps; i++) step(game);
   assert.ok(game.verticalState, 'crossing the authored start position should enter the vertical section');
 }
 
@@ -62,13 +63,21 @@ test('scene changes wait for a full clear horizontal runway', () => {
   const game = createGame({ mode: 'challenge', seed: 17 });
   game.generated = false;
   game.state.obstacles = [];
-  game.state.distance = VERTICAL_SECTION_START_X;
+  game.state.distance = VERTICAL_PORTAL_X;
   const worldX = game.state.distance + game.state.runner.x;
-  game.state.terrain = [{ kind: 'gap', x: worldX + 200, width: 100, height: 0 }];
+  game.state.terrain = [{ kind: 'gap', x: worldX + 40, width: 280, height: 0 }];
   step(game);
   assert.equal(game.verticalState, null, 'entry waits before a gap in the runway');
+  assert.equal(game.verticalWarp, null);
   game.state.terrain = [];
-  step(game);
+  game.state.status = 'running';
+  game.state.deathReason = null;
+  game.state.runner.y = game.config.groundY - game.state.runner.height;
+  game.state.runner.vy = 0;
+  game.state.runner.grounded = true;
+  game.state.distance = VERTICAL_SECTION_START_X;
+  const warpSteps = Math.ceil(VERTICAL_WARP_SECONDS / game.config.fixedStep) + 4;
+  for (let i = 0; i < warpSteps; i++) step(game);
   assert.ok(game.verticalState);
   const last = game.verticalObstacles.at(-1);
   game.verticalState.y = last.y + last.height + 151;

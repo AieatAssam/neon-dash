@@ -54,9 +54,9 @@ test('seeded courses vary safe sides, repeat some sides, and timed inputs clear 
     const section = { ...config, forwardSpeed: speed, obstacles };
     let state = createVerticalSection(section);
     let switchedForGate = new Set();
-    for (let i = 0; i < 4000 && !state.crashed && state.y < 3000; i++) {
+    for (let i = 0; i < 8000 && !state.crashed && state.y < (obstacles.filter(o => !o.passive).at(-1)?.y ?? 3000) + 200; i++) {
       const gateIndex = obstacles.findIndex((gate, index) =>
-        !switchedForGate.has(index) && state.y >= gate.y - 450,
+        !gate.passive && !switchedForGate.has(index) && state.y >= gate.y - 450,
       );
       let switchPressed = false;
       if (gateIndex >= 0) {

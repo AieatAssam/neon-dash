@@ -3,8 +3,10 @@
 export function courseInput(game) {
   const s = game.state;
   if (game.verticalState) {
+    const lookahead = Math.max(600, Math.min(310, game.state.speed) * 2.1);
     const nextWall = game.verticalObstacles.find(obstacle =>
-      obstacle.y + obstacle.height > game.verticalState.y && game.verticalState.y >= obstacle.y - 500,
+      !obstacle.passive &&
+      obstacle.y + obstacle.height > game.verticalState.y && game.verticalState.y >= obstacle.y - lookahead,
     );
     const safePhase = nextWall ? (nextWall.x === 0 ? 1 : 0) : game.verticalState.phase;
     return { jump: false, togglePhase: Boolean(nextWall && safePhase !== game.verticalState.phase) };

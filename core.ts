@@ -1,7 +1,12 @@
 import { BEAT_SECONDS } from './rhythm';
 import { longGapCrossingAt, longGapCollectiblesAt } from './long-gap-crossing';
 import { collectShield, createPowerUpState, resolveCollision, type PowerUpState } from './powerups';
-import { createVerticalSection, createVerticalSectionCourse, stepVerticalSection, type VerticalSectionState, type VerticalObstacle } from './vertical-section';
+import {
+  createVerticalSection, createVerticalSectionCourse, stepVerticalSection, VERTICAL_FIRST_LETHAL_Y, VERTICAL_SAFE_RUNWAY_Y,
+  type VerticalSectionState, type VerticalObstacle,
+} from './vertical-section';
+
+export { VERTICAL_FIRST_LETHAL_Y, VERTICAL_SAFE_RUNWAY_Y } from './vertical-section';
 
 /**
  * Deterministic, fixed-step runner simulation.
@@ -44,6 +49,10 @@ export interface Game {
   accumulator: number; pendingInput: Required<Input>; state: GameState;
   /** One authored color-wall set piece is part of challenge runs. */
   verticalState: VerticalSectionState | null; verticalObstacles: readonly VerticalObstacle[]; verticalComplete: boolean;
+  /** Seconds into the runway warp before vertical play begins. */
+  verticalWarp: number | null;
+  /** Course Y below which obstacles cannot kill the runner (teach runway). */
+  verticalGraceUntilY: number;
 }
 
 export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
@@ -68,8 +77,14 @@ export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
 /** Default finite course length (about one minute at the normal speed ramp). */
 export const CHALLENGE_FINISH_X = 18000;
 export const VERTICAL_SECTION_START_X = 5000;
+/** World distance where the portal warp begins (slightly before the authored cut). */
+export const VERTICAL_PORTAL_X = VERTICAL_SECTION_START_X - 60;
+export const VERTICAL_APPROACH_CUE_X = VERTICAL_SECTION_START_X - 1400;
+/** Real-time seconds of slow-mo / rotation before the vertical sim starts. */
+export const VERTICAL_WARP_SECONDS = 1.35;
 const VERTICAL_SECTION_WIDTH = 420;
 const VERTICAL_RUNWAY_X = 320;
+const VERTICAL_INTRO_TICKS = 600;
 const FIXED_LAYOUT_FINISH_X = 9000;
 
 // Compact clusters fit under one jump at the slowest speed. The runway
@@ -270,6 +285,8 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     verticalState: null,
     verticalObstacles: createVerticalSectionCourse(Number(config.seed) >>> 0),
     verticalComplete: false,
+    verticalWarp: null,
+    verticalGraceUntilY: 0,
     state: {
       time: 0,
       speed: config.speed,
@@ -308,9 +325,16 @@ export function step(game: Game, input: Input = {}): GameState {
     s.time += dt;
     s.speed = game.generated ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
     s.level = 1 + Math.floor(s.time / 20);
+    const intro = game.verticalState.ticks;
+    const speedScale = intro < VERTICAL_INTRO_TICKS
+      ? .58 + .42 * (intro / VERTICAL_INTRO_TICKS)
+      : 1;
+    const capped = Math.min(s.speed, 310);
     const verticalConfig = {
       width: VERTICAL_SECTION_WIDTH, height: 900, obstacles: game.verticalObstacles,
-      forwardSpeed: s.speed, fixedStep: c.fixedStep,
+      forwardSpeed: capped * speedScale,
+      attraction: intro < VERTICAL_INTRO_TICKS ? 1100 : 1500,
+      fixedStep: c.fixedStep,
     };
     game.verticalState = stepVerticalSection(game.verticalState, { switchPressed: Boolean(input.togglePhase) }, verticalConfig);
     if (input.togglePhase) s.stats.switches++;
@@ -319,7 +343,10 @@ export function step(game: Game, input: Input = {}): GameState {
     // Keep the world generated during the scene swap so the exit runway is based
     // on the actual upcoming horizontal course rather than a stale lookahead.
     if (game.generated) extendCourse(game);
-    if (game.verticalState.crashed) { s.status = 'dead'; s.deathReason = 'obstacle'; return s; }
+    if (game.verticalState.crashed && game.verticalState.y >= game.verticalGraceUntilY) {
+      s.status = 'dead'; s.deathReason = 'obstacle'; return s;
+    }
+    if (game.verticalState.crashed) game.verticalState = { ...game.verticalState, crashed: false };
     const last = game.verticalObstacles.at(-1);
     if (last && game.verticalState.y >= last.y + last.height + 150 && hasHorizontalRunway(game)) {
       game.verticalState = null;
@@ -353,7 +380,8 @@ export function step(game: Game, input: Input = {}): GameState {
   s.speed = game.generated ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
   s.level = 1 + Math.floor(s.time / 20);
   const previousWorldX = s.distance + s.runner.x;
-  s.distance += s.speed * dt;
+  const warpSlow = game.verticalWarp != null && game.verticalWarp < VERTICAL_WARP_SECONDS ? .38 : 1;
+  s.distance += s.speed * dt * warpSlow;
   if (game.generated) extendCourse(game);
   const previousBottom = s.runner.y + s.runner.height;
   s.runner.grounded = false;
@@ -435,15 +463,23 @@ export function step(game: Game, input: Input = {}): GameState {
   }
   s.shieldPickups.length = liveShieldPickups;
   if (s.distance + s.runner.x >= c.finishX) s.status = "won";
-  if (s.status === 'running' && c.mode === 'challenge' && !game.verticalComplete && s.distance >= VERTICAL_SECTION_START_X &&
-      s.runner.grounded && hasHorizontalRunway(game)) {
-    const vertical = createVerticalSection({ width: VERTICAL_SECTION_WIDTH, height: 900, obstacles: game.verticalObstacles });
-    vertical.phase = s.phase;
-    s.runner.y = c.groundY - s.runner.height;
-    s.runner.vy = 0;
-    s.runner.grounded = true;
-    s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
-    game.verticalState = vertical;
+  if (s.status === 'running' && c.mode === 'challenge' && !game.verticalComplete && !game.verticalState) {
+    const readyForWarp = s.distance >= VERTICAL_PORTAL_X && s.runner.grounded && hasHorizontalRunway(game);
+    if (readyForWarp && game.verticalWarp == null) game.verticalWarp = 0;
+    if (game.verticalWarp != null) {
+      game.verticalWarp += dt;
+      if (game.verticalWarp >= VERTICAL_WARP_SECONDS && hasHorizontalRunway(game)) {
+        const vertical = createVerticalSection({ width: VERTICAL_SECTION_WIDTH, height: 900, obstacles: game.verticalObstacles });
+        vertical.phase = s.phase;
+        game.verticalGraceUntilY = VERTICAL_SAFE_RUNWAY_Y;
+        s.runner.y = c.groundY - s.runner.height;
+        s.runner.vy = 0;
+        s.runner.grounded = true;
+        s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
+        game.verticalState = vertical;
+        game.verticalWarp = null;
+      }
+    }
   }
   return s;
 }

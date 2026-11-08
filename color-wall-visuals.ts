@@ -42,7 +42,7 @@ export function drawVerticalSectionVisuals(
   section: {
     width: number;
     state: { x: number; y: number; phase: 0 | 1 };
-    obstacles?: readonly { x: number; y: number; width: number; height: number }[];
+    obstacles?: readonly { x: number; y: number; width: number; height: number; passive?: boolean }[];
     cameraY?: number;
     primaryColor?: string;
     secondaryColor?: string;
@@ -62,8 +62,8 @@ export function drawVerticalSectionVisuals(
     y: (obstacle.y + obstacle.height / 2 - cameraY) / visibleCourseHeight,
     width: obstacle.width / section.width,
     height: obstacle.height / visibleCourseHeight,
-    kind: 'block' as const,
-    color: GAMEPLAY_COLORS.danger,
+    kind: obstacle.passive ? 'gate' as const : 'block' as const,
+    color: obstacle.passive ? section.primaryColor ?? '#37ffe7' : GAMEPLAY_COLORS.danger,
   }));
   const runnerColor = section.state.phase === 0 ? section.primaryColor ?? '#37ffe7' : section.secondaryColor ?? '#dfb8ff';
   drawColorWallLane(ctx, {
@@ -102,18 +102,48 @@ export function drawColorWallLane(ctx: CanvasRenderingContext2D, options: ColorW
   const rail = Math.max(5, Math.min(12, width * .035));
 
   ctx.save();
-  // Screen-space environmental wipe: keeps the visual transition independent of world scroll.
-  ctx.fillStyle = '#04091a';
+  const sky = ctx.createLinearGradient(x, y, x, y + height);
+  sky.addColorStop(0, '#0c0428');
+  sky.addColorStop(.45, '#120a3a');
+  sky.addColorStop(1, '#071a38');
+  ctx.fillStyle = sky;
   ctx.fillRect(x, y, width, height);
+  const horizonY = y + height * .72;
+  const horizon = ctx.createLinearGradient(x, horizonY - 40, x, horizonY + 60);
+  horizon.addColorStop(0, '#ff3ca622');
+  horizon.addColorStop(.5, '#9161ff44');
+  horizon.addColorStop(1, '#0000');
+  ctx.fillStyle = horizon;
+  ctx.fillRect(x, horizonY - 40, width, 120);
+  if (!options.reducedMotion) {
+    ctx.globalAlpha = .35;
+    ctx.fillStyle = '#f4ffff';
+    for (let i = 0; i < 18; i++) {
+      const sx = x + width * ((i * 73) % 100) / 100;
+      const sy = y + height * ((i * 41) % 55) / 100;
+      ctx.fillRect(sx, sy, i % 3 === 0 ? 2 : 1, i % 3 === 0 ? 2 : 1);
+    }
+    ctx.globalAlpha = 1;
+  }
   const wash = ctx.createLinearGradient(x, y, x + width, y + height);
-  wash.addColorStop(0, withAlpha(primary, .15 * (1 - transition)));
-  wash.addColorStop(1, withAlpha(secondary, .15 * transition));
+  wash.addColorStop(0, withAlpha(primary, .22 * (1 - transition)));
+  wash.addColorStop(1, withAlpha(secondary, .22 * transition));
   ctx.fillStyle = wash;
   ctx.fillRect(x, y, width, height);
 
   ctx.beginPath(); ctx.rect(x, y, width, height); ctx.clip();
+  const gridDrift = options.reducedMotion ? 0 : ((clock * 62 + (options.runnerY ?? 0) * 180) % 52);
+  ctx.strokeStyle = primary + '2a';
+  ctx.lineWidth = 1;
+  for (let gy = y + gridDrift; gy < y + height + 52; gy += 52) {
+    ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + width, gy); ctx.stroke();
+  }
+  ctx.strokeStyle = secondary + '24';
+  for (let gx = x; gx < x + width; gx += 42) {
+    ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx - width * .08, y + height); ctx.stroke();
+  }
   // Parallax chevrons establish upward travel without obscuring hazards.
-  ctx.strokeStyle = '#b7d9ff18'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#b7d9ff28'; ctx.lineWidth = 1.2;
   const drift = options.reducedMotion ? 0 : ((clock * 50) % 82);
   for (let row = y - 82 + drift; row < y + height + 80; row += 82) {
     ctx.beginPath(); ctx.moveTo(x + width * .16, row + 23); ctx.lineTo(x + width * .5, row); ctx.lineTo(x + width * .84, row + 23); ctx.stroke();
@@ -162,9 +192,13 @@ function drawHazard(ctx: CanvasRenderingContext2D, x: number, y: number, laneW: 
     ctx.fillStyle = '#020613'; ctx.fillRect(-w / 2, -height / 2, w, height);
     ctx.setLineDash([4, 4]); ctx.strokeStyle = '#ff6387'; ctx.strokeRect(-w / 2, -height / 2, w, height); ctx.setLineDash([]);
   } else if (h.kind === 'gate') {
-    ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.strokeStyle = color; ctx.fillStyle = color + '28';
+    ctx.shadowColor = color; ctx.shadowBlur = 14; ctx.strokeStyle = color; ctx.fillStyle = color + '35';
     ctx.fillRect(-w / 2, -height / 2, w, height); ctx.strokeRect(-w / 2, -height / 2, w, height);
-    ctx.shadowBlur = 0; ctx.fillStyle = '#f4ffff'; ctx.font = `bold ${Math.max(10, height * .45)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SWITCH', 0, 0);
+    ctx.shadowBlur = 0; ctx.strokeStyle = '#ffffffcc'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-w * .22, -height * .08); ctx.lineTo(0, -height * .35); ctx.lineTo(w * .22, -height * .08); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-w * .22, height * .08); ctx.lineTo(0, height * .35); ctx.lineTo(w * .22, height * .08); ctx.stroke();
+    ctx.fillStyle = '#f4ffff'; ctx.font = `bold ${Math.max(10, height * .42)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('STEER', 0, 0);
   } else {
     ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.fillStyle = '#172941'; ctx.strokeStyle = color;
     ctx.fillRect(-w / 2, -height / 2, w, height); ctx.strokeRect(-w / 2, -height / 2, w, height);

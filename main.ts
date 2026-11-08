@@ -1,7 +1,10 @@
 import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
 import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION, RUNNER_TRAIL_SEGMENTS } from './runner-visuals';
-import { challengeProgress, createGame, step, floorPulseState, VERTICAL_SECTION_START_X } from './core';
+import {
+  challengeProgress, createGame, step, floorPulseState,
+  VERTICAL_SECTION_START_X, VERTICAL_APPROACH_CUE_X, VERTICAL_PORTAL_X, VERTICAL_WARP_SECONDS,
+} from './core';
 import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
 import { resultDetail } from './result-copy.js';
 import { viewportWorldSize } from './viewport';
@@ -131,6 +134,17 @@ phaseHint.hidden = true;
 phaseHint.textContent = touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES';
 $('viewport').append(phaseHint);
 const sectionCue = $('sectionCue') as HTMLDivElement;
+const verticalTutorial = document.getElementById('verticalTutorial') as HTMLDivElement;
+const TUTORIAL_KEY = 'neon-dash-vertical-tutorial';
+let verticalBlendStart = 0;
+function showVerticalTutorialIfNeeded() {
+  try {
+    if (localStorage.getItem(TUTORIAL_KEY) === 'seen') return;
+    localStorage.setItem(TUTORIAL_KEY, 'seen');
+  } catch {}
+  verticalTutorial.hidden = false;
+  window.setTimeout(() => { verticalTutorial.hidden = true; }, 4200);
+}
 function updateBest() {
  $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
  $('best').innerHTML = selectedMode === 'challenge' ? `${progress.challengeBest || 0}<span>%</span>` : `${best}<span>m</span>`;
@@ -178,7 +192,7 @@ function start(newCircuit = false, preserveJumpInput = false) {
  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
  activePractice = $('practiceMode').checked; checkpoints = [];
  if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
- game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0;
+ game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0; verticalBlendStart = 0;
  renderDirty = true; lastTime = 0; resetRunnerTrail();
  if (preserveJumpInput) jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; else clearJumpInput();
  jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
@@ -349,13 +363,12 @@ function render(time) {
  }
  ctx.clearRect(0, 0, width, height);
  if (game.verticalState) {
-  sectionCue.hidden = true;
+  sectionCue.hidden = true; verticalTutorial.hidden = true;
   $('jumpBtn').hidden = true;
   phaseButton.hidden = false;
   phaseHint.hidden = false;
   phaseHint.textContent = touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE';
   phaseButton.classList.add('vertical-active');
-  ctx.fillStyle = '#04091a'; ctx.fillRect(0, 0, width, height);
   const wallLayout = colorWallLayout(width, height);
   const visibleCourseHeight = wallLayout.height / (wallLayout.width / 420);
   drawVerticalSectionVisuals(ctx, {
@@ -440,6 +453,27 @@ function render(time) {
  ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.stroke();
  ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(worldRight, c.groundY + 7); ctx.stroke(); ctx.restore();
  ctx.restore();
+ const portalScreenX = VERTICAL_SECTION_START_X - s.distance;
+ if (selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState && portalScreenX > -140 && portalScreenX < worldRight + 140) {
+  const sway = reducedMotion ? 0 : Math.sin(clock * 3.2) * 5;
+  const archW = 68, archH = 196;
+  ctx.save();
+  drawGlow('v-portal', portalScreenX - archW / 2, c.groundY - archH + sway, archW, archH, glowUnit * 1.15, CYAN, g => {
+   g.strokeStyle = CYAN; g.lineWidth = 3.5;
+   g.beginPath(); g.moveTo(0, archH); g.lineTo(archW / 2, 0); g.lineTo(archW, archH); g.closePath(); g.stroke();
+   g.strokeStyle = VIOLET; g.lineWidth = 1.5; g.setLineDash([5, 5]);
+   g.beginPath(); g.moveTo(archW * .18, archH - 10); g.lineTo(archW / 2, 24); g.lineTo(archW * .82, archH - 10); g.stroke();
+  });
+  ctx.strokeStyle = CYAN; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(portalScreenX - archW / 2, c.groundY + sway); ctx.lineTo(portalScreenX, c.groundY - archH + sway); ctx.lineTo(portalScreenX + archW / 2, c.groundY + sway); ctx.stroke();
+  ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.font = `700 ${Math.max(10, 12 * width / (canvas.clientWidth || 1))}px sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText(game.verticalWarp != null ? '↑ ↑' : 'WALL', portalScreenX, c.groundY - archH - 12 + sway);
+  ctx.restore();
+ }
+ if (game.verticalWarp != null && game.verticalWarp < VERTICAL_WARP_SECONDS) {
+  const warpT = game.verticalWarp / VERTICAL_WARP_SECONDS;
+  ctx.save(); ctx.fillStyle = `rgba(55,255,231,${.07 + warpT * .12})`; ctx.fillRect(0, 0, width, height); ctx.restore();
+ }
  for (const terrain of s.terrain) {
   const x = terrain.x - s.distance; if (x < -terrain.width || x > worldRight) continue;
   ctx.save();
@@ -615,7 +649,14 @@ function render(time) {
  phaseHint.textContent = game.verticalState
   ? (touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE')
   : (touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES');
- sectionCue.hidden = !(selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState && game.state.distance >= VERTICAL_SECTION_START_X - 1200);
+ const approachingWall = selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState &&
+  (game.state.distance >= VERTICAL_APPROACH_CUE_X || game.verticalWarp != null);
+ sectionCue.hidden = !approachingWall;
+ if (approachingWall) {
+  sectionCue.textContent = game.verticalWarp != null && game.verticalWarp < VERTICAL_WARP_SECONDS
+   ? 'GRAVITY TURNS · HOLD STEADY'
+   : 'COLOR WALL AHEAD · GRAVITY TURNS UPWARD';
+ }
  if (phaseButton.dataset.phase !== phaseName) {
   phaseButton.dataset.phase=phaseName;
   phaseButton.innerHTML=touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
@@ -624,9 +665,14 @@ function render(time) {
  }
 }
 function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasVertical=Boolean(game.verticalState);const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:wasVertical ? false : jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');if (!wasVertical && game.verticalState) { $('status').textContent = 'Color wall section. Switch color to move toward the open side.'; phaseHint.hidden = false; $('jumpBtn').hidden = true; phaseButton.classList.add('vertical-active'); } else if (wasVertical && !game.verticalState) { $('status').textContent = 'Color wall cleared. Horizontal run resumed.'; $('jumpBtn').hidden = false; phaseButton.classList.remove('vertical-active'); }jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
+ if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasVertical=Boolean(game.verticalState);const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:wasVertical ? false : jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');if (!wasVertical && game.verticalState) { showVerticalTutorialIfNeeded(); verticalBlendStart = performance.now(); visualEvent = { name: 'phase', at: performance.now() }; haptic([18, 28, 18]); $('status').textContent = 'Color wall section. Switch color to move toward the open side.'; phaseHint.hidden = false; $('jumpBtn').hidden = true; phaseButton.classList.add('vertical-active'); } else if (wasVertical && !game.verticalState) { $('status').textContent = 'Color wall cleared. Horizontal run resumed.'; $('jumpBtn').hidden = false; phaseButton.classList.remove('vertical-active'); }jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
  if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
  if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
+ const warp = game.verticalWarp != null ? Math.min(1, game.verticalWarp / VERTICAL_WARP_SECONDS) : 0;
+ const blend = verticalBlendStart && game.verticalState ? Math.min(1, (time - verticalBlendStart) / 1100) : 1;
+ const tilt = warp > 0 && warp < 1 ? (1 - warp) * 16 : blend < 1 ? (1 - blend) * 12 : 0;
+ const scale = 0.9 + 0.1 * Math.max(blend, warp > 0 ? warp : 1);
+ canvas.style.transform = tilt && !reducedMotion ? `perspective(860px) rotateX(${tilt}deg) scale(${scale})` : '';
 }
 
 class RunScene extends Phaser.Scene {
