@@ -69,7 +69,8 @@ try {
   const runs = [];
   const started = Date.now();
   for (let attempt = 0; attempt < maxAttempts && runs.filter(run => !run.endedEarly && run.samples.length === measuredFrames).length < targetRuns; attempt++) {
-    if (await page.locator('#overlay').isVisible()) await page.locator('#playBtn').tap();
+    if (await page.locator('#playBtn').isVisible()) await page.locator('#playBtn').tap();
+    else if (await page.locator('#retryBtn').isVisible()) await page.locator('#retryBtn').tap();
     else await page.keyboard.press('KeyR');
     const result = await page.evaluate(({ warmupFrames, measuredFrames }) => new Promise(resolve => {
       let last;
@@ -88,7 +89,7 @@ try {
     runs.push(result);
   }
   const summary = summarizeRuns(runs, measuredFrames);
-  const backing = await page.locator('canvas').evaluate(canvas => ({ width: canvas.width, height: canvas.height, cssWidth: canvas.clientWidth, cssHeight: canvas.clientHeight }));
+  const backing = await page.locator('#game').evaluate(canvas => ({ width: canvas.width, height: canvas.height, cssWidth: canvas.clientWidth, cssHeight: canvas.clientHeight }));
   if (backing.width !== Math.round(backing.cssWidth * 3) || backing.height !== Math.round(backing.cssHeight * 3)) throw new Error('Canvas backing size does not match DPR 3');
   console.log(JSON.stringify({ viewport: '390x844', dpr: 3, cpuThrottle: 4, browser: browser.version(), seedSource: 'fixed Math.random=0.25', warmupFrames, measuredFrames, targetRuns, elapsedMs: Date.now() - started, backing, ...summary }));
   if (summary.completedRuns < targetRuns) process.exitCode = 1;

@@ -36,13 +36,13 @@ export function lookaheadUnits(width: number, height: number, runnerWidth = 24):
 /** The shaft fills phone width in portrait; in landscape it is a centered lane
  * sized so at least a second of gates is visible below the runner. */
 export function shaftLayout(width: number, height: number, courseWidth = 420) {
-  const laneWidth = isPortrait(width, height) ? width : Math.min(width * .62, height * 1.08, courseWidth * 2.2);
+  const laneWidth = isPortrait(width, height) ? width : Math.min(width * .62, height * .86, courseWidth * 2.2);
   const scale = laneWidth / courseWidth;
   return {
     x: (width - laneWidth) / 2,
     width: laneWidth,
     scale,
     /** Runner screen y as a share of the screen height. */
-    runnerShare: isPortrait(width, height) ? .24 : .14,
+    runnerShare: isPortrait(width, height) ? .24 : .2,
   };
 }

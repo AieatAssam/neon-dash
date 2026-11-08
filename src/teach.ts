@@ -3,7 +3,7 @@ import type { Game } from '../core';
 /** Teach by doing: the first time each mechanic approaches, show one short
  * prompt. A mechanic counts as learned once the runner gets past it alive. */
 
-export type Lesson = 'spike' | 'gate' | 'shield' | 'gap' | 'platform' | 'pulse';
+export type Lesson = 'spike' | 'gate' | 'gap' | 'platform' | 'pulse';
 
 export interface Prompt { lesson: Lesson; text: string; /** Point at the color button. */ target?: 'phase'; slow: boolean }
 
@@ -29,7 +29,6 @@ export class Teacher {
     switch (lesson) {
       case 'spike': return this.touch ? 'TAP TO JUMP' : 'SPACE TO JUMP';
       case 'gate': return this.touch ? 'TAP ◈ TO SWITCH COLOR' : 'X TO SWITCH COLOR';
-      case 'shield': return 'SHIELD · SAVES YOU ONCE';
       case 'gap': return 'JUMP THE GAP';
       case 'platform': return 'LAND ON TOP';
       case 'pulse': return 'JUMP THE PULSE';
@@ -61,7 +60,6 @@ export class Teacher {
       else consider(o.kind === 'pulse' ? 'pulse' : 'spike', o.x, o.x + o.width);
     }
     for (const t of s.terrain) consider(t.kind === 'gap' ? 'gap' : 'platform', t.x, t.x + t.width);
-    for (const p of s.shieldPickups) consider('shield', p.x - p.radius, p.x);
     if (!best) return null;
     const lesson = (best as { lesson: Lesson; x: number }).lesson;
     if (!this.pending.has(lesson)) this.pending.set(lesson, (best as { x: number }).x);

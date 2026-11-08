@@ -15,6 +15,31 @@ export interface ShaftView {
   glowUnit: number;
   heat: number;
   hideRunner: boolean;
+  dpr: number;
+}
+
+let staticLayer: { key: string; canvas: HTMLCanvasElement } | null = null;
+/** The tunnel gradient and lane shade never move, so they are cached as one image. */
+function shaftBackground(w: number, h: number, dpr: number): HTMLCanvasElement {
+  const key = `${w}x${h}@${dpr}`;
+  if (staticLayer?.key === key) return staticLayer.canvas;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * dpr));
+  canvas.height = Math.max(1, Math.round(h * dpr));
+  const g = canvas.getContext('2d')!;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  paintShaftStatic(g, w, h);
+  staticLayer = { key, canvas };
+  return canvas;
+}
+
+function paintShaftStatic(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const t = shaftLayout(w, h, VERTICAL_WIDTH);
+  const bg = ctx.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, P.skyTop); bg.addColorStop(.5, P.skyMid); bg.addColorStop(1, P.skyLow);
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = P.floorBottom + 'b0';
+  ctx.fillRect(t.x, 0, t.width, h);
 }
 
 /** Screen transform for course coordinates: screen = (course - origin) * scale + offset. */
@@ -41,9 +66,7 @@ export function drawShaft(
   const scroll = st.y * t.scale;
 
   // Background: deep tunnel gradient with stars streaming past.
-  const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, P.skyTop); bg.addColorStop(.5, P.skyMid); bg.addColorStop(1, P.skyLow);
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(shaftBackground(w, h, view.dpr), 0, 0, w, h);
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (let i = 0; i < 70; i++) {
@@ -85,9 +108,7 @@ export function drawShaft(
     ctx.fillStyle = fade2; ctx.fillRect(t.x + t.width, 0, 40, h);
   }
 
-  // Lane floor with a grid that scrolls 1:1 with the course.
-  ctx.fillStyle = P.floorBottom + 'b0';
-  ctx.fillRect(t.x, 0, t.width, h);
+  // Lane grid scrolls 1:1 with the course.
   ctx.strokeStyle = P.grid; ctx.globalAlpha = .28 + view.beat * .3; ctx.lineWidth = 1;
   ctx.beginPath();
   const firstRow = st.y - h * t.runnerShare / t.scale - 60;

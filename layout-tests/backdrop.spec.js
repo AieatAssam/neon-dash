@@ -52,9 +52,9 @@ test('the canvas follows resizes at device resolution', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
   await page.setViewportSize({ width: 430, height: 932 });
-  await expect.poll(() => page.locator('canvas').evaluate(canvas => canvas.width)).toBe(430);
+  await expect.poll(() => page.locator('#game').evaluate(canvas => canvas.width)).toBe(430);
   await page.setViewportSize({ width: 430, height: 700 });
-  await expect.poll(() => page.locator('canvas').evaluate(canvas => canvas.height)).toBe(700);
+  await expect.poll(() => page.locator('#game').evaluate(canvas => canvas.height)).toBe(700);
   const sky = await band(page, .1, .3);
   expect(sky.mean).toBeGreaterThan(10);
 });

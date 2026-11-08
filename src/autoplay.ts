@@ -190,9 +190,9 @@ export class SloppyBot {
       this.retryAt = null;
     }
     // A press swallowed mid-air (after a stray hop) gets one more try once
-    // the runner lands and the hazard is still ahead.
+    // the runner lands, timed to the hazard again rather than fired on landing.
     if (jump && jump.key === this.target && this.pressedAt !== null && s.runner.grounded &&
-        s.stats.jumps === this.jumpsAtPress && t > this.pressedAt + .15 && jump.ttc > 0) {
+        s.stats.jumps === this.jumpsAtPress && t > this.pressedAt + .15 && jump.ttc > 0 && jump.ttc <= this.pressTtc + .1) {
       this.retryAt ??= t + this.between(p.retryDelay);
       if (t >= this.retryAt) { tap = true; this.pressedAt = null; }
     }

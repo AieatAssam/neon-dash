@@ -98,7 +98,13 @@ let lastFrame = 0;
 let timeScale = 1;
 let bot: Bot | null = null;
 let forcedSeed: number | null = Number(params.get('seed')) || null;
+/** Wall clock for presentation timing; the capture harness can freeze it and step frames by hand. */
+let manualClock: number | null = null;
+const clock = () => manualClock ?? performance.now();
 let botName = '';
+let botSeedBase = 1;
+let autoRetry = false;
+let resultShownAt = 0;
 let streak = 0;
 let lastPerfectAt = -10;
 let rotation = 0;
@@ -113,6 +119,7 @@ let lastShaft: Game['verticalState'] = null;
 let lastShaftSnapshot: Game['verticalState'] = null;
 let newBest = false;
 let frameCost = 16;
+let steadyFrames = 0;
 let bloom = !reducedMotion && params.get('bloom') !== 'off';
 
 // Input
@@ -218,6 +225,8 @@ function start(options: { keepHeld?: boolean } = {}) {
   demo = null;
   mode = 'running';
   attempt++;
+  // Bots keep timers in game time, so every attempt gets a fresh one (seeded like scripts/bot-report.mjs).
+  if (bot && botName !== 'good' && botName !== 'none') bot = botFor(botName as 'sloppy', botSeedBase * 1000 + attempt);
   checkpoints = []; checkpointMarks = []; lastCheckpointAt = 0;
   resetRunPresentation();
   if (!options.keepHeld) { jumpPointers.clear(); keyJump = false; }
@@ -256,7 +265,7 @@ function practiceRespawn() {
   lastCheckpointAt = game.state.time;
   ui.overlay.hidden = true;
   viewportEl.classList.toggle('shaft', Boolean(game.verticalState));
-  if (game.verticalState) shaftEnteredAt = performance.now() - 2000;
+  if (game.verticalState) shaftEnteredAt = clock() - 2000;
   syncMusic(true);
 }
 
@@ -279,7 +288,7 @@ function pause() {
 
 function die() {
   mode = 'dying';
-  diedAt = performance.now();
+  diedAt = clock();
   timeScale = 1;
   const s = game.state;
   sfx('death');
@@ -287,9 +296,9 @@ function die() {
   fx.shake(.75);
   fx.flashOnce(C.danger, .5);
   const [x, y] = runnerWorldCenter();
-  fx.burst(x, y, 26, PHASE_COLORS[s.phase], { speed: 420, life: .9, size: 7, gravity: 600, shape: 1 });
-  fx.burst(x, y, 30, C.danger, { speed: 300, life: .6, size: 3, gravity: 200 });
-  fx.burst(x, y, 12, C.white, { speed: 520, life: .35, size: 2.5, gravity: 0, shape: 2 });
+  fx.burst(x, y, 36, PHASE_COLORS[s.phase], { speed: 480, life: 1, size: 9, gravity: 640, shape: 1 });
+  fx.burst(x, y, 34, C.danger, { speed: 340, life: .7, size: 4, gravity: 220 });
+  fx.burst(x, y, 16, C.white, { speed: 620, life: .4, size: 3, gravity: 0, shape: 2 });
   audio.setRate(1);
   audio.music.pause();
   setTeach(''); setBanner('');
@@ -308,6 +317,7 @@ function saveProgress(pct: number) {
 
 function showResult() {
   mode = 'over';
+  resultShownAt = clock();
   setPlaying(false);
   const s = game.state;
   const won = s.status === 'won';
@@ -332,7 +342,7 @@ function win() {
   saveProgress(100);
   audio.music.pause();
   mode = 'dying';
-  diedAt = performance.now() - 200;
+  diedAt = clock() - 200;
 }
 
 function retry() { start({ keepHeld: false }); }
@@ -354,7 +364,7 @@ function playMusic() {
 // ---------------------------------------------------------------- input
 function press() {
   if (mode === 'title') return;
-  if (mode === 'over' || (mode === 'dying' && performance.now() - diedAt > 200)) { if (runMode === 'practice' && mode === 'dying') return; retry(); return; }
+  if (mode === 'over' || (mode === 'dying' && clock() - diedAt > 200)) { if (runMode === 'practice' && mode === 'dying') return; retry(); return; }
   if (mode !== 'running' || bot) return;
   if (game.verticalState) toggleQueued = true;
   else jumpQueued = true;
@@ -512,12 +522,12 @@ function stepOnce() {
     }
   }
   if (!wasWarp && game.verticalWarp !== null) {
-    warpStartedAt = performance.now();
+    warpStartedAt = clock();
     sfx('whoosh'); haptic([15, 30, 15]);
     setBanner('GRAVITY TURNS!');
   }
   if (!wasShaft && game.verticalState) {
-    shaftEnteredAt = performance.now();
+    shaftEnteredAt = clock();
     fx.clear();
     fx.flashOnce(C.white, .55);
     shaftTrail.reset();
@@ -525,7 +535,7 @@ function stepOnce() {
     ui.status.textContent = 'Gravity turned. Tap to swap walls.';
   }
   if (wasShaft && !game.verticalState && s.status === 'running') {
-    shaftExitedAt = performance.now();
+    shaftExitedAt = clock();
     fx.clear();
     fx.flashOnce(C.white, .45);
     sfx('whoosh');
@@ -543,15 +553,20 @@ function stepOnce() {
 function targetTimeScale(): number {
   if (mode !== 'running') return 1;
   if (game.verticalWarp !== null) return .42;
-  if (game.verticalState && performance.now() - shaftEnteredAt < 450) return .55;
+  if (game.verticalState && clock() - shaftEnteredAt < 450) return .55;
   if (prompt?.slow && !teacher.learned.has(prompt.lesson)) return .5;
   return 1;
 }
 
 function tick(now: number) {
+  if (game.verticalState) lastShaftSnapshot = game.verticalState;
   const realDt = lastFrame ? Math.min(.1, (now - lastFrame) / 1000) : 0;
   lastFrame = now;
-  if (realDt > 0) frameCost = frameCost * .95 + realDt * 1000 * .05;
+  // Judge quality on steady frames (the title's attract demo counts, so slow devices
+  // settle before play); skip the first frames after load, which include warm-up hitches.
+  if (realDt > 0 && manualClock === null && (mode === 'running' || mode === 'title') && realDt < .1) {
+    if (++steadyFrames > 8) frameCost = frameCost * .9 + Math.min(50, realDt * 1000) * .1;
+  }
   const target = targetTimeScale();
   timeScale += (target - timeScale) * Math.min(1, realDt * (target < timeScale ? 9 : 4));
   if (mode === 'running') {
@@ -575,6 +590,8 @@ function tick(now: number) {
     else if (age > 900) showResult();
   } else if (mode === 'title' && demo) {
     advanceDemo(realDt);
+  } else if (mode === 'over' && bot && autoRetry && now - resultShownAt > 900) {
+    retry();
   }
   fx.update(realDt * (mode === 'dying' ? .6 : Math.max(.5, timeScale)));
   squash += (1 - squash) * Math.min(1, realDt * 14);
@@ -599,7 +616,7 @@ function updateCues() {
     if ((game.verticalCleared > 0 || game.verticalState.phase !== 0) && !learned) store.set('neon-dash-shaft', 'done');
     const text = learned ? '' : touch ? 'TAP TO SWAP WALLS' : 'SPACE TO SWAP WALLS';
     setTeach(text, true);
-    setBanner(performance.now() - shaftEnteredAt < 1400 ? 'GRAVITY TURNS!' : '');
+    setBanner(clock() - shaftEnteredAt < 1400 ? 'GRAVITY TURNS!' : '');
     ui.phaseBtn.classList.toggle('nudge', Boolean(text));
   } else {
     setTeach(prompt ? prompt.text : '');
@@ -631,17 +648,20 @@ function applyBloom() {
   // Squaring twice keeps only the bright light, then a further downsample spreads it.
   a.globalCompositeOperation = 'multiply'; a.drawImage(bloomA, 0, 0); a.drawImage(bloomA, 0, 0);
   b.globalCompositeOperation = 'copy'; b.drawImage(bloomA, 0, 0, bloomB.width, bloomB.height);
+  // Fold the wide blur into the narrow one so only one full-screen upscale is drawn.
+  a.globalCompositeOperation = 'lighter';
+  a.drawImage(bloomB, 0, 0, aw, ah);
+  a.globalAlpha = .57; a.drawImage(bloomB, 0, 0, aw, ah); a.globalAlpha = 1;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'lighter';
   ctx.imageSmoothingEnabled = true;
-  ctx.globalAlpha = .55; ctx.drawImage(bloomB, 0, 0, canvas.width, canvas.height);
   ctx.globalAlpha = .35; ctx.drawImage(bloomA, 0, 0, canvas.width, canvas.height);
   ctx.restore();
 }
 
 function adaptQuality() {
-  if (frameCost > 26 && bloom) { bloom = false; fx.density = .6; }
+  if (steadyFrames > 20 && frameCost > 26 && bloom) { bloom = false; fx.density = .6; }
 }
 
 function beatInfo() {
@@ -662,18 +682,22 @@ function horizontalFrame(g: Game) {
   return { scale, cameraX, runwayY, offsetY, horizonY, world };
 }
 
+function skyBlend(g: Game) {
+  const section = Math.floor(g.state.distance / 5600);
+  const blend = Math.max(0, Math.min(1, (g.state.distance % 5600 - 4800) / 800));
+  return { palette: skyPaletteFor(section), next: skyPaletteFor(section + 1), blend };
+}
+
 function drawHorizontal(g: Game, now: number, beat: { env: number; phase: number }, hideRunner: boolean) {
   const { width: w, height: h, dpr } = view;
   const f = horizontalFrame(g);
   const s = g.state;
-  const section = Math.floor(s.distance / 5600);
-  const into = s.distance % 5600;
-  const blend = Math.max(0, Math.min(1, (into - 4800) / 800));
+  const { palette, next, blend } = skyBlend(g);
   drawBackdrop(ctx, {
     width: w, height: h, dpr, horizonY: f.horizonY, runwayY: f.runwayY,
     originX: (f.cameraX - s.distance) * f.scale, scale: f.scale,
     time: now / 1000, beat: beat.env, beatPhase: beat.phase,
-    palette: skyPaletteFor(section), next: skyPaletteFor(section + 1), blend, reducedMotion,
+    palette, next, blend, reducedMotion,
   });
   const base = ctx.getTransform();
   ctx.save();
@@ -708,7 +732,7 @@ function drawShaftView(now: number, beat: { env: number; phase: number }, state 
     shield: game.state.powerUps.shieldCharges > 0,
   }, {
     width: w, height: h, time: now / 1000, beat: beat.env, beatPhase: beat.phase, reducedMotion,
-    glowUnit: 22, heat: Math.min(1, streak / 30), hideRunner,
+    glowUnit: 22, heat: Math.min(1, streak / 30), hideRunner, dpr: view.dpr,
   }, shaftTrail, glow);
   const t = shaftTransform(w, h, state.y);
   ctx.save();
@@ -757,7 +781,11 @@ function render(now: number) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   const [shx, shy] = fx.offset(now / 1000, reducedMotion);
-  ctx.translate(shx, shy);
+  if (shx || shy) {
+    // Zoom in just enough that the shaken frame never shows its edges.
+    const over = 1 + 2.2 * Math.max(Math.abs(shx), Math.abs(shy)) / Math.min(w, h);
+    ctx.translate(w / 2 + shx, h / 2 + shy); ctx.scale(over, over); ctx.translate(-w / 2, -h / 2);
+  }
   const beat = beatInfo();
   if (mode === 'title' && demo) drawHorizontal(demo, now, beat, false);
   else if (game.verticalWarp !== null && !game.verticalState) {
@@ -799,14 +827,18 @@ function render(now: number) {
 }
 
 // ---------------------------------------------------------------- harness
-type PlayOptions = { seed?: number; mode?: MenuMode; bot?: 'good' | 'sloppy' | 'very-sloppy' | 'none'; botSeed?: number; skipTo?: number | 'cue' | 'warp' | 'vertical' | 'exit'; after?: number };
+type PlayOptions = { retry?: boolean; seed?: number; mode?: MenuMode; bot?: 'good' | 'sloppy' | 'very-sloppy' | 'none'; botSeed?: number; skipTo?: number | 'cue' | 'warp' | 'vertical' | 'exit'; after?: number };
 function harnessPlay(options: PlayOptions = {}) {
   menuMode = options.mode ?? 'challenge';
   refreshTitle();
   if (options.seed) forcedSeed = options.seed;
+  attempt = 0;
+  bot = null;
   start();
   botName = options.bot ?? 'good';
-  bot = botName === 'none' ? null : botFor(botName as any, options.botSeed ?? 1);
+  botSeedBase = options.botSeed ?? 1;
+  autoRetry = Boolean(options.retry);
+  bot = botName === 'none' ? null : botFor(botName as 'sloppy', botSeedBase * 1000 + attempt);
   const skip = options.skipTo;
   if (skip !== undefined) {
     const until = (g: Game) => skip === 'cue' ? g.state.distance >= VERTICAL_APPROACH_CUE_X - 200
@@ -816,12 +848,15 @@ function harnessPlay(options: PlayOptions = {}) {
       : g.state.time >= skip;
     // Fast-forwards always arrive alive; the requested bot (or the player) takes over afterwards.
     const driver = bot ?? botFor('good', 1);
-    for (let i = 0; i < 120 * 200 && game.state.status === 'running' && !until(game); i++) step(game, driver(game));
+    for (let i = 0; i < 120 * 200 && game.state.status === 'running' && !until(game); i++) {
+      step(game, driver(game));
+      if (i % 6 === 0) teacher.update(game);
+    }
     if (options.after) {
       const end = game.state.time + options.after;
       while (game.state.time < end && game.state.status === 'running') step(game, driver(game));
     }
-    if (game.verticalState) { shaftEnteredAt = performance.now() - (options.after ?? 0) * 1000; viewportEl.classList.add('shaft'); }
+    if (game.verticalState) { shaftEnteredAt = clock() - (options.after ?? 0) * 1000; viewportEl.classList.add('shaft'); }
     trail.reset(); shaftTrail.reset(); recordTrail();
     teacher.update(game);
     syncMusic(true);
@@ -833,7 +868,7 @@ function harnessState() {
   return {
     mode, status: s.status, time: s.time, distance: s.distance, percent: percent(), attempt,
     vertical: Boolean(game.verticalState), warp: game.verticalWarp, verticalComplete: game.verticalComplete,
-    phase: s.phase, jumps: s.stats.jumps, orbs: s.stats.orbs, cleared: s.stats.cleared, streak, timeScale,
+    phase: s.phase, airborne: !s.runner.grounded, jumps: s.stats.jumps, orbs: s.stats.orbs, cleared: s.stats.cleared, streak, timeScale,
     teach: shownTeach, banner: shownBanner, bloom, frameCost,
   };
 }
@@ -842,6 +877,13 @@ function harnessState() {
   state: harnessState,
   setBot(kind: PlayOptions['bot'], botSeed = 1) { bot = kind === 'none' || !kind ? null : botFor(kind, botSeed); },
   title: showTitle,
+  /** Freeze the wall clock and render exactly one frame per call (for clips). */
+  manual(on = true) { manualClock = on ? performance.now() : null; lastFrame = 0; },
+  frame(ms = 1000 / 60) {
+    if (manualClock === null) manualClock = performance.now();
+    manualClock += ms;
+    tick(manualClock);
+  },
 };
 
 if (import.meta.env.DEV) {
@@ -859,7 +901,7 @@ if (import.meta.env.DEV) {
     game.verticalLength = verticalSectionLength(game.verticalObstacles);
     game.verticalComplete = false;
     enterVertical(game);
-    shaftEnteredAt = performance.now() - 6000;
+    shaftEnteredAt = clock() - 6000;
     viewportEl.classList.add('shaft');
   };
   (window as any).__verticalTestState = () => ({
@@ -893,8 +935,7 @@ class RunScene extends Phaser.Scene {
     const width = Math.max(1, Math.round(rect.width * dpr));
     const height = Math.max(1, Math.round(rect.height * dpr));
     if (this.scale.width !== width || this.scale.height !== height) this.scale.resize(width, height);
-    if (game.verticalState) lastShaftSnapshot = game.verticalState;
-    tick(time);
+    if (manualClock === null) tick(time);
   }
 }
 

@@ -21,11 +21,13 @@ canvas{display:block;width:100%;height:100%}
 .icon-button[aria-pressed=false]{color:var(--ui-muted)}
 .viewport.playing .hud-actions #soundBtn{display:none}
 .viewport:not(.playing) .progress{visibility:hidden}
+/* Landscape shaft: the lane is centered (see shaftLayout), so the readout moves beside it. */
+@media(min-aspect-ratio:3/4){.viewport.shaft .progress{flex:none;margin:0;width:calc((100vw - min(62vw,86vh,924px))/2 - var(--safe-left) - 16px)}.viewport.shaft .banner{top:68%}}
 .practice-badge{position:absolute;top:calc(var(--safe-top) + 50px);left:50%;transform:translateX(-50%);z-index:4;font:700 11px/1 'DM Sans',sans-serif;letter-spacing:2px;color:var(--ui-lime);padding:5px 10px;border:1px solid var(--ui-lime-55);border-radius:999px;background:var(--ui-ink-bb);pointer-events:none}
 
 /* In-game words: one short line, big, centered, never over the controls. */
 .teach,.banner{position:absolute;left:50%;transform:translateX(-50%);z-index:3;pointer-events:none;text-align:center;white-space:nowrap;font-family:'Barlow Condensed',Impact,sans-serif;font-weight:800;letter-spacing:1.5px}
-.teach{top:24%;max-width:calc(100vw - 24px);box-sizing:border-box;font-size:clamp(22px,6.4vw,40px);color:var(--ui-white);padding:8px 22px;border-radius:14px;background:var(--ui-ink-99);border:2px solid var(--phase);box-shadow:0 0 24px var(--phase),inset 0 0 18px var(--ui-violet-glow-44);text-shadow:0 0 14px var(--phase);animation:teachIn .28s cubic-bezier(.2,1.6,.4,1)}
+.teach{top:24%;max-width:calc(100vw - 24px);white-space:normal;text-wrap:balance;width:max-content;box-sizing:border-box;font-size:clamp(22px,6.4vw,40px);color:var(--ui-white);padding:8px 22px;border-radius:14px;background:var(--ui-ink-99);border:2px solid var(--phase);box-shadow:0 0 24px var(--phase),inset 0 0 18px var(--ui-violet-glow-44);text-shadow:0 0 14px var(--phase);animation:teachIn .28s cubic-bezier(.2,1.6,.4,1)}
 .viewport.shaft .teach{top:46%}
 .teach.big{font-size:clamp(24px,7vw,46px);border-color:var(--ui-gold);box-shadow:0 0 30px var(--ui-gold-66)}
 .banner{top:calc(var(--safe-top) + 58px);font-size:clamp(18px,5vw,26px);color:var(--ui-ink);background:linear-gradient(90deg,var(--ui-cyan),var(--ui-violet));padding:6px 18px;border-radius:999px;box-shadow:0 0 26px var(--ui-cyan-66);animation:bannerPulse .52s ease-in-out infinite alternate}
@@ -45,7 +47,7 @@ canvas{display:block;width:100%;height:100%}
 
 /* Menu and result cards share one compact column. */
 .game-overlay,.pause-overlay{position:absolute;inset:0;display:grid;place-items:center;text-align:center;z-index:5}
-.game-overlay{background:radial-gradient(ellipse at 50% 45%,var(--ui-ink-1c),var(--ui-ink-99) 75%)}
+.game-overlay{background:linear-gradient(180deg,var(--ui-ink-1c) 0%,var(--ui-ink-1c) 42%,var(--ui-ink-99) 100%)}
 .game-overlay.result{background:var(--ui-ink-80)}
 .pause-overlay{background:var(--ui-ink-e0);backdrop-filter:blur(6px);z-index:6}
 .menu{display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px;max-width:100%}
@@ -83,7 +85,8 @@ canvas{display:block;width:100%;height:100%}
   .primary-button{height:54px;font-size:26px}
   .result-score{font-size:84px}
   .teach{top:30%;font-size:28px}
-  .viewport.shaft .teach{top:46%}
+  .teach.big{font-size:34px}
+  .viewport.shaft .teach{top:44%}
   .banner{top:calc(var(--safe-top) + 52px)}
   .phase-button,.jump-button{width:64px;height:64px}
   .pause-overlay h2{font-size:44px}

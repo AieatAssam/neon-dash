@@ -155,11 +155,22 @@ function tiled(ctx: CanvasRenderingContext2D, image: HTMLCanvasElement, w: numbe
   for (; x < w; x += tileW) ctx.drawImage(image, x, y, tileW, h);
 }
 
+/** The parts of the backdrop that never move: sky, sun, stars, horizon glow and floor
+ * shade. Cached as one image, so each frame costs a single blit. */
+function paintStaticSky(g: CanvasRenderingContext2D, w: number, h: number, horizonY: number, p: SkyPalette) {
+  paintSky(g, w, h, horizonY, p);
+  const floor = g.createLinearGradient(0, horizonY, 0, h);
+  floor.addColorStop(0, p.floorTop);
+  floor.addColorStop(1, p.floorBottom);
+  g.fillStyle = floor;
+  g.fillRect(0, horizonY, w, h - horizonY);
+}
+
 function drawSkyLayers(ctx: CanvasRenderingContext2D, v: BackdropView, p: SkyPalette, alpha: number) {
   const { width: w, height: h, dpr, horizonY } = v;
   const key = `${w}:${h}:${dpr}:${Math.round(horizonY)}:${p.name}`;
   ctx.globalAlpha = alpha;
-  ctx.drawImage(layer('sky', key, w, h, dpr, g => paintSky(g, w, h, horizonY, p)), 0, 0, w, h);
+  ctx.drawImage(layer('sky', key, w, h, dpr, g => paintStaticSky(g, w, h, horizonY, p)), 0, 0, w, h);
   const mountainH = Math.min(h * .12, 110), mountainW = Math.max(w, 700) * 1.3;
   const mountains = layer('mountains', `${Math.round(mountainW)}:${Math.round(mountainH)}:${dpr}:${p.name}`, mountainW, mountainH, dpr, g => paintMountains(g, mountainW, mountainH, p, 3));
   tiled(ctx, mountains, w, mountainW, -v.originX * .03, horizonY - mountainH, mountainH);
@@ -175,36 +186,36 @@ export function drawBackdrop(ctx: CanvasRenderingContext2D, v: BackdropView): vo
   if (v.next && v.blend) drawSkyLayers(ctx, v, v.next, v.blend);
   const p = v.blend && v.next && v.blend > .5 ? v.next : v.palette;
 
-  const floor = ctx.createLinearGradient(0, horizonY, 0, h);
-  floor.addColorStop(0, p.floorTop);
-  floor.addColorStop(1, p.floorBottom);
-  ctx.fillStyle = floor;
-  ctx.fillRect(0, horizonY, w, h - horizonY);
-
   const depth = Math.max(8, runwayY - horizonY);
   const vx = w * .5;
   const spacing = 64 * v.scale;
-  const fade = ctx.createLinearGradient(0, horizonY, 0, h);
-  fade.addColorStop(0, p.grid + '00');
-  fade.addColorStop(.25, p.grid + '55');
-  fade.addColorStop(1, p.grid + 'cc');
-  ctx.strokeStyle = fade;
-  ctx.lineWidth = 1.1 + v.beat * .6;
-  ctx.globalAlpha = .55 + v.beat * .45;
-  ctx.beginPath();
+  // Solid strokes in depth bands fade the grid toward the horizon; a gradient
+  // stroke looks the same but costs several times more fill on phones.
   const bottomU = (h - horizonY) / depth;
   const first = ((v.originX - vx) % spacing + spacing) % spacing + vx - Math.ceil(w * 3 / spacing) * spacing;
-  for (let xr = first; xr < vx + w * 3; xr += spacing) {
-    ctx.moveTo(vx + (xr - vx) * .02, horizonY + depth * .02);
-    ctx.lineTo(vx + (xr - vx) * bottomU, h);
+  const base = .55 + v.beat * .45;
+  ctx.strokeStyle = p.grid;
+  ctx.lineWidth = 1.1 + v.beat * .6;
+  const bands: [number, number, number][] = [[.02, .12, .12], [.12, .3, .3], [.3, .6, .5], [.6, 1, .74]];
+  for (const [f0, f1, alpha] of bands) {
+    const u0 = f0 * bottomU, u1 = f1 * bottomU;
+    ctx.globalAlpha = base * alpha;
+    ctx.beginPath();
+    for (let xr = first; xr < vx + w * 3; xr += spacing) {
+      const x0 = vx + (xr - vx) * u0, x1 = vx + (xr - vx) * u1;
+      if ((x0 < -4 && x1 < -4) || (x0 > w + 4 && x1 > w + 4)) continue;
+      ctx.moveTo(x0, horizonY + depth * u0);
+      ctx.lineTo(x1, horizonY + depth * u1);
+    }
+    for (let n = 0; n < 14; n++) {
+      const u = 1 / (.42 + .3 * n);
+      if (u < u0 || u >= u1) continue;
+      const y = horizonY + depth * u;
+      if (y > h || y < horizonY + 1) continue;
+      ctx.moveTo(0, y); ctx.lineTo(w, y);
+    }
+    ctx.stroke();
   }
-  for (let n = 0; n < 14; n++) {
-    const u = 1 / (.42 + .3 * n);
-    const y = horizonY + depth * u;
-    if (y > h || y < horizonY + 1) continue;
-    ctx.moveTo(0, y); ctx.lineTo(w, y);
-  }
-  ctx.stroke();
   if (!v.reducedMotion) {
     // A bright line rolls toward the player on every beat.
     const u = 1 / (4.2 - 3.75 * v.beatPhase);
