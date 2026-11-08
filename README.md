@@ -37,6 +37,6 @@ Neon Dash is an independent project inspired by the broad one-button rhythm-plat
 
 [Watch a short gameplay clip](docs/media/gameplay.webm)
 
-| Challenge color wall (portrait) | Opening run (portrait) |
+| After overhaul (390×844) | Before baseline (390×844) |
 | --- | --- |
-| ![Color wall section](docs/media/color-wall-390.png) | ![First 20 seconds](docs/media/opening-390.png) |
+| ![After overhaul](docs/media/opening-390.png) | ![Before baseline](docs/media/opening-before-390.png) |
