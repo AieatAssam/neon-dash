@@ -21,6 +21,39 @@ export const ART_PALETTES = [
   { name: 'lagoon', top: '#061a2c', horizon: '#124458', floor: '#071b31', pink: '#fa55e7', blue: '#24b8ff', ...GAMEPLAY_COLORS },
 ] as const;
 
+/** Synthwave sky sets. Bright tones stay on the horizon and sun, behind the
+ * dark floor that carries gameplay, so hazards never sit on a bright field. */
+export interface SkyPalette {
+  name: string;
+  skyTop: string; skyMid: string; skyLow: string; horizon: string;
+  sunTop: string; sunMid: string; sunBottom: string; sunGlow: string;
+  star: string; accent: string; window: string; mountain: string; city: string;
+  floorTop: string; floorBottom: string; grid: string; gridHot: string;
+}
+
+export const SKY_PALETTES: readonly SkyPalette[] = Object.freeze([
+  { name: 'dusk', skyTop: '#05021a', skyMid: '#1d0a49', skyLow: '#4a1167', horizon: '#ff3ca6',
+    sunTop: '#ffe46b', sunMid: '#ff8a5c', sunBottom: '#ff2f92', sunGlow: '#ff3ca6',
+    star: '#d6dcff', accent: '#ff4fd8', window: '#7ad7ff', mountain: '#24104a', city: '#0d0526',
+    floorTop: '#14062f', floorBottom: '#030713', grid: '#ff3ca6', gridHot: '#ffd6f2' },
+  { name: 'ember', skyTop: '#090218', skyMid: '#2c0838', skyLow: '#6a1748', horizon: '#ff6a3d',
+    sunTop: '#fff27a', sunMid: '#ffa53d', sunBottom: '#ff3d6e', sunGlow: '#ff7a3d',
+    star: '#ffe3f1', accent: '#ffb347', window: '#ff8fd6', mountain: '#2e0b3a', city: '#110420',
+    floorTop: '#1a0527', floorBottom: '#040611', grid: '#ff4fa3', gridHot: '#ffe0ef' },
+  { name: 'lagoon', skyTop: '#010a1c', skyMid: '#06244a', skyLow: '#0d4a72', horizon: '#2ee6ff',
+    sunTop: '#f4ff9a', sunMid: '#5effc8', sunBottom: '#2b9cff', sunGlow: '#2ee6ff',
+    star: '#d8fbff', accent: '#37ffe7', window: '#ff7ae0', mountain: '#082a48', city: '#020c1d',
+    floorTop: '#04142d', floorBottom: '#020611', grid: '#37b8ff', gridHot: '#d0f6ff' },
+].map(p => Object.freeze(p)));
+
+/** The shaft uses its own cool palette so the scene change reads instantly. */
+export const SHAFT_PALETTE: SkyPalette = Object.freeze({
+  name: 'shaft', skyTop: '#02031a', skyMid: '#0a0b3a', skyLow: '#1a0f5c', horizon: '#8a5cff',
+  sunTop: '#ffffff', sunMid: '#b39dff', sunBottom: '#37ffe7', sunGlow: '#8a5cff',
+  star: '#cfe8ff', accent: '#37ffe7', window: '#dfb8ff', mountain: '#120c3a', city: '#070420',
+  floorTop: '#070726', floorBottom: '#02030f', grid: '#6a5cff', gridHot: '#e0d8ff',
+});
+
 function linearRgb(hex: string): number[] {
   if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`Expected opaque six-digit hex color: ${hex}`);
   return [1, 3, 5].map(offset => {
@@ -78,6 +111,9 @@ const UI_COLORS = {
   'body': '#b2c7d7',
   'cyan-highlight': '#b4fff0',
   'pink-glow': '#ff58be',
+  'pink': '#ff3ca6',
+  'pink-light': '#ffd3ec',
+  'lime': GAMEPLAY_COLORS.platform,
   'gold': '#ffc46a',
 } as const;
 
@@ -105,6 +141,13 @@ export const UI_CSS_COLORS: Record<string, string> = {
   '--ui-cyan-highlight': UI_COLORS['cyan-highlight'],
   '--ui-cyan-shadow': UI_COLORS['cyan-shadow'],
   '--ui-gold': UI_COLORS['gold'],
+  '--ui-gold-66': `${UI_COLORS['gold']}66`,
+  '--ui-lime': UI_COLORS['lime'],
+  '--ui-lime-55': `${UI_COLORS['lime']}55`,
+  '--ui-pink': UI_COLORS['pink'],
+  '--ui-pink-light': UI_COLORS['pink-light'],
+  '--ui-pink-glow-33': `${UI_COLORS['pink-glow']}33`,
+  '--ui-pink-glow-55': `${UI_COLORS['pink-glow']}55`,
   '--ui-heading-shadow': UI_COLORS['heading-shadow'],
   '--ui-ink': UI_COLORS['ink'],
   '--ui-ink-1c': `${UI_COLORS['ink']}1c`,
@@ -126,5 +169,6 @@ export const UI_CSS_COLORS: Record<string, string> = {
   '--ui-violet': UI_COLORS['violet'],
   '--ui-violet-glow-44': `${UI_COLORS['violet-glow']}44`,
   '--ui-violet-glow-55': `${UI_COLORS['violet-glow']}55`,
+  '--ui-violet-glow-88': `${UI_COLORS['violet-glow']}88`,
   '--ui-white': UI_COLORS['white'],
 };

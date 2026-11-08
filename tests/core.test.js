@@ -1,7 +1,7 @@
 import { courseInput } from './course-solver.js';
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advance, createGame, step } from "../core.ts";
+import { advance, createGame, resumeAfterVertical, step } from "../core.ts";
 
 test("fixed-step advance matches repeated single steps", () => {
   const a = createGame({ speed: 1000, obstacleStartX: 10000, finishX: 100000 });
@@ -101,10 +101,15 @@ test("spike collision respects the triangular tip instead of its empty corners",
   assert.equal(game.state.status, "running");
 });
 
-test("endless course is seeded and varies between seeds", () => {
-  assert.deepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 7 }).state.obstacles);
-  assert.notDeepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 8 }).state.obstacles);
-  assert.ok(createGame().state.obstacles.some(o => o.kind === 'gate'));
+test("endless course is seeded and varies between seeds after the authored opening", () => {
+  const after = (seed, seconds = 32) => {
+    const game = createGame({ seed });
+    for (let i = 0; i < 120 * seconds; i++) { game.state.runner.y = -10000; game.state.runner.vy = 0; step(game); }
+    return game.state.obstacles.map(({ cleared, ...o }) => o);
+  };
+  assert.deepEqual(createGame({ seed: 7 }).state.obstacles, createGame({ seed: 8 }).state.obstacles, 'shared warm-up');
+  assert.deepEqual(after(7), after(7));
+  assert.notDeepEqual(after(7), after(8));
 });
 
 test("endless ramp is capped and obstacle memory stays bounded", () => {
@@ -190,14 +195,16 @@ test('jump pressed shortly before landing is buffered', () => {
 });
 
 
-test('endless generation starts with the gate tutorial and spaces later gates', () => {
+test('endless generation teaches one gate after the warm-up and spaces later gates', () => {
   const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
-  const openingGate = game.state.obstacles.find(o => o.kind === 'gate');
+  let openingGate;
+  for (let i = 0; i < 120 * 12 && !openingGate; i++) {
+    game.state.runner.y = -10000; game.state.runner.vy = 0; step(game);
+    openingGate = game.state.obstacles.find(o => o.kind === 'gate');
+  }
   assert.ok(openingGate);
-  assert.ok(openingGate.phase === 0 || openingGate.phase === 1);
-  assert.ok(Math.abs((openingGate.x - game.config.runnerX) / game.config.speed - 8 * (60 / 115)) < .01);
-  assert.ok(['gap', 'platform'].includes(game.state.terrain[0].kind));
-  assert.ok(Math.abs((game.state.terrain[0].x - game.config.runnerX) / game.config.speed - 14 * (60 / 115)) < .01);
+  assert.equal(openingGate.phase, 0);
+  assert.ok(Math.abs((openingGate.x - game.config.runnerX) / game.config.speed - 31 * (60 / 115)) < .01);
   let foundGate = false;
   for (let i = 0; i < 120 * 50; i++) {
     game.state.runner.y = -10000;
@@ -245,12 +252,12 @@ test('long challenge uses finite seeded generation with a clear finish runway', 
   const a = createGame({ mode: 'challenge', seed: 17 });
   const b = createGame({ mode: 'challenge', seed: 17 });
   assert.equal(a.endless, false);
-  assert.equal(a.config.finishX, 18000);
+  assert.equal(a.config.finishX, 22000);
   assert.deepEqual(a.state, b.state);
-  assert.notDeepEqual(a.state.obstacles, createGame({ mode: 'challenge', seed: 18 }).state.obstacles);
+  assert.notDeepEqual(a.verticalObstacles, createGame({ mode: 'challenge', seed: 18 }).verticalObstacles);
   // This assertion isolates the finite horizontal generator and finish runway;
   // the authored vertical set piece has its own fixed-step integration tests.
-  a.verticalComplete = b.verticalComplete = true;
+  resumeAfterVertical(a); resumeAfterVertical(b);
   let maxLive = 0;
   for (let i = 0; i < 120 * 80 && a.state.status === 'running'; i++) {
     a.state.runner.y = b.state.runner.y = -10000;
@@ -264,7 +271,7 @@ test('long challenge uses finite seeded generation with a clear finish runway', 
   }
   assert.equal(a.state.status, 'won');
   assert.deepEqual(a.state, b.state);
-  assert.ok(a.state.time > 55 && a.state.time < 75);
+  assert.ok(a.state.time > 65 && a.state.time < 85, `finish time ${a.state.time}`);
   assert.ok(maxLive < 35);
   const time = a.state.time;
   step(a);

@@ -1,7 +1,14 @@
 import { BEAT_SECONDS } from './rhythm';
 import { longGapCrossingAt, longGapCollectiblesAt } from './long-gap-crossing';
 import { collectShield, createPowerUpState, resolveCollision, type PowerUpState } from './powerups';
-import { createVerticalSection, createVerticalSectionCourse, stepVerticalSection, type VerticalSectionState, type VerticalObstacle } from './vertical-section';
+import {
+  createVerticalSection, createVerticalSectionCourse, createVerticalSectionOrbs, stepVerticalSection,
+  verticalForwardSpeed, verticalHits, verticalSectionLength,
+  VERTICAL_PLAYER_RADIUS, VERTICAL_SAFE_RUNWAY_Y, VERTICAL_WALL_INSET, VERTICAL_WIDTH,
+  type VerticalOrb, type VerticalSectionState, type VerticalObstacle,
+} from './vertical-section';
+
+export { VERTICAL_FIRST_LETHAL_Y, VERTICAL_SAFE_RUNWAY_Y } from './vertical-section';
 
 /**
  * Deterministic, fixed-step runner simulation.
@@ -25,10 +32,12 @@ export interface Box { x: number; y: number; width: number; height: number }
 export interface Obstacle {
   x: number; width: number; height: number; phase: Phase | null;
   kind?: 'spike' | 'gate' | 'pulse'; pulseTime?: number; cleared?: boolean; groupId?: number; shielded?: boolean;
+  /** Opening lessons are tagged so the UI can teach each mechanic once. */
+  lesson?: boolean;
 }
 export interface RunStats { jumps: number; switches: number; cleared: number; neutralCleared: number; orbs: number }
 export interface Collectible { x: number; y: number; radius: number }
-export interface Terrain { kind: 'gap' | 'platform'; x: number; width: number; height: number }
+export interface Terrain { kind: 'gap' | 'platform'; x: number; width: number; height: number; lesson?: boolean }
 export interface GameState {
   time: number; speed: number; level: number; stats: RunStats; distance: number; phase: Phase;
   runner: Box & { vy: number; grounded: boolean }; obstacles: Obstacle[]; terrain: Terrain[]; collectibles: Collectible[]; shieldPickups: Collectible[]; powerUps: PowerUpState;
@@ -37,13 +46,32 @@ export interface GameState {
 }
 /** Jump is held; phase switching is an edge-triggered action. */
 export interface Input { jump?: boolean; togglePhase?: boolean }
+
+type ScriptKind = 'spike' | 'double' | 'gate' | 'gap' | 'platform' | 'shield';
+export interface ScriptItem { beat: number; kind: ScriptKind; phase?: Phase; height?: number }
+
 export interface Game {
   config: GameConfig; endless: boolean; generated: boolean; randomState: number; nextCluster: number;
   nextBeat: number; phraseStart: number; phrasePattern: readonly number[]; phraseIndex: number;
+  /** Beat of the first motif phrase; motifs are counted from here. */
+  phraseOrigin: number;
+  /** Authored lesson beats consumed before the motif generator. */
+  script: ScriptItem[];
+  /** Generation never places a feature beyond this world x (the portal runway). */
+  holdAtX: number | null;
   nextObstacleGroup: number;
   accumulator: number; pendingInput: Required<Input>; state: GameState;
   /** One authored color-wall set piece is part of challenge runs. */
   verticalState: VerticalSectionState | null; verticalObstacles: readonly VerticalObstacle[]; verticalComplete: boolean;
+  verticalOrbs: VerticalOrb[]; verticalLength: number; verticalCleared: number;
+  /** Gate rows broken by a shield; they no longer collide. */
+  verticalShattered: number[];
+  /** Seconds into the portal warp before vertical play begins. */
+  verticalWarp: number | null;
+  /** Course y below which obstacles cannot kill the runner (tutorial runway). */
+  verticalGraceUntilY: number;
+  /** Simulation time of the last scene change, for presentation easing. */
+  verticalEnteredAt: number | null; verticalExitedAt: number | null;
 }
 
 export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
@@ -65,10 +93,18 @@ export const DEFAULT_CONFIG: Readonly<GameConfig> = Object.freeze({
   fixedStep: 1 / 120,
 });
 
-/** Default finite course length (about one minute at the normal speed ramp). */
-export const CHALLENGE_FINISH_X = 18000;
-export const VERTICAL_SECTION_START_X = 5000;
-const VERTICAL_SECTION_WIDTH = 420;
+/** Forgiveness tuned for touch screens. */
+export const COYOTE_SECONDS = .1;
+export const JUMP_BUFFER_SECONDS = .15;
+/** Hazard contact ignores this much of the runner's outer edge. */
+export const HAZARD_INSET = 3;
+
+/** Default finite course length (about 75 seconds at the normal speed ramp). */
+export const CHALLENGE_FINISH_X = 22000;
+/** Beat at which the challenge portal opens (about 21 s at the default ramp). */
+export const VERTICAL_PORTAL_BEAT = 40;
+/** Simulation seconds spent in the portal warp before the shaft begins. */
+export const VERTICAL_WARP_SECONDS = .8;
 const VERTICAL_RUNWAY_X = 320;
 const FIXED_LAYOUT_FINISH_X = 9000;
 
@@ -89,6 +125,24 @@ export const LEVEL_SECTIONS = Object.freeze([
   Object.freeze({ name: 'mixed run', beats: Object.freeze([2, 4, 6]) }),
 ]);
 
+/** A free shield on the opening runway forgives the first mistake. The first
+ * fifteen seconds are single, low spikes four beats apart, each with an orb
+ * on its jump arc. One color gate follows, then one more spike. */
+export const WARMUP_SCRIPT: readonly ScriptItem[] = Object.freeze([
+  { beat: 3, kind: 'shield' }, { beat: 8, kind: 'spike', height: 30 }, { beat: 12, kind: 'spike', height: 30 },
+  { beat: 16, kind: 'spike', height: 32 }, { beat: 20, kind: 'spike', height: 34 },
+  { beat: 24, kind: 'spike', height: 34 }, { beat: 28, kind: 'spike', height: 34 },
+  { beat: 31, kind: 'gate', phase: 0 }, { beat: 35, kind: 'spike', height: 34 },
+].map(item => Object.freeze(item as ScriptItem)));
+
+/** Terrain lessons, relative to the beat where they begin. */
+export const LESSON_SCRIPT: readonly ScriptItem[] = Object.freeze([
+  { beat: 0, kind: 'gap' }, { beat: 4, kind: 'platform' }, { beat: 7, kind: 'shield' },
+  { beat: 8, kind: 'double' },
+].map(item => Object.freeze(item as ScriptItem)));
+const LESSON_BEATS = 12;
+const ENDLESS_LESSON_BEAT = 39;
+
 function random(game: Game): number {
   game.randomState = (game.randomState + 0x6D2B79F5) >>> 0;
   let n = game.randomState;
@@ -99,91 +153,123 @@ function random(game: Game): number {
 
 /** Integrate the same capped ramp used by the runner, keeping musical timing
  * stable as the world speeds up. Fixed-step integration differs by < one pixel. */
-function courseDistance(config: GameConfig, time: number): number {
+export function courseDistance(config: GameConfig, time: number): number {
   const capTime = Math.max(0, (config.maxSpeed - config.speed) / 1.2);
   const rampTime = Math.min(time, capTime);
   return Math.min(config.speed, config.maxSpeed) * rampTime + .6 * rampTime * rampTime +
     Math.max(0, time - capTime) * config.maxSpeed;
 }
 
+/** Distance at which the challenge portal opens for the default configuration. */
+export const VERTICAL_SECTION_START_X = Math.round(courseDistance(DEFAULT_CONFIG, VERTICAL_PORTAL_BEAT * BEAT_SECONDS));
+/** The cue gate and banner appear this many units before the portal. */
+export const VERTICAL_APPROACH_CUE_X = VERTICAL_SECTION_START_X - 1300;
+
+/** Point the generator at the next authored lesson or motif beat. */
+function scheduleNext(game: Game): void {
+  game.nextBeat = game.script.length ? game.script[0].beat : game.phraseStart + game.phrasePattern[game.phraseIndex];
+  game.nextCluster = game.config.runnerX + courseDistance(game.config, game.nextBeat * BEAT_SECONDS);
+}
+
+function startPhrases(game: Game, origin: number): void {
+  game.phraseOrigin = origin;
+  game.phraseStart = origin;
+  game.phraseIndex = 0;
+  game.phrasePattern = LEVEL_SECTIONS[0].beats;
+}
+
+function addOrb(game: Game, time: number, onGround: boolean): void {
+  const c = game.config;
+  game.state.collectibles.push({
+    x: c.runnerX + courseDistance(c, time) + c.runnerWidth / 2,
+    y: c.groundY - (onGround ? c.runnerHeight / 2 : 110), radius: 10,
+  });
+}
+
+function placeScript(game: Game, item: ScriptItem): void {
+  const s = game.state;
+  const c = game.config;
+  const x = game.nextCluster;
+  const time = item.beat * BEAT_SECONDS;
+  const groupId = game.nextObstacleGroup++;
+  if (item.kind === 'spike' || item.kind === 'double') {
+    const count = item.kind === 'double' ? 2 : 1;
+    for (let i = 0; i < count; i++) s.obstacles.push({ x: x + i * 28, width: 26, height: item.height ?? 34, phase: null, groupId, lesson: true });
+    addOrb(game, time + .16, false);
+  } else if (item.kind === 'gate') {
+    s.obstacles.push({ x, width: 22, height: 180, phase: item.phase ?? 0, kind: 'gate', groupId, lesson: true });
+    addOrb(game, time + .16, true);
+  } else if (item.kind === 'gap' || item.kind === 'platform') {
+    const gap = item.kind === 'gap';
+    s.terrain.push({ kind: item.kind, x, width: gap ? 90 : 84, height: gap ? 0 : 28, lesson: true });
+    addOrb(game, time + .16, false);
+  } else {
+    s.shieldPickups.push({ x, y: c.groundY - c.runnerHeight / 2, radius: 12 });
+  }
+}
+
+function placePhrase(game: Game): void {
+  const s = game.state;
+  const c = game.config;
+  const scheduledTime = game.nextBeat * BEAT_SECONDS;
+  const tier = Math.min(6, 2 + Math.floor(scheduledTime / 15));
+  const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
+  const height = 34 + Math.floor(random(game) * 4) * 4;
+  const phraseNumber = Math.floor((game.phraseStart - game.phraseOrigin) / 8);
+  const motif = phraseNumber % LEVEL_SECTIONS.length;
+  const gate = motif === 2;
+  const terrain = motif === 1 || motif === 3 && game.phraseIndex !== 1;
+  const groupId = game.nextObstacleGroup++;
+  const crossing = motif === 1;
+  if (crossing) {
+    // Reserve the entire phrase for a continuous void and its stepping
+    // stones. The next phrase starts its gates two beats late, leaving
+    // at least 312 units of clear ground after the crossing at speed 240.
+    if (game.nextCluster + 1140 <= c.finishX) {
+      const crossingOrigin = game.nextCluster - 90;
+      const crossingVariant = ((Number(c.seed) >>> 0) + Math.floor(phraseNumber / 4)) % 3;
+      s.terrain.push(...longGapCrossingAt(crossingOrigin, crossingVariant));
+      s.collectibles.push(...longGapCollectiblesAt(crossingOrigin, c.groundY, crossingVariant));
+    }
+    game.phraseIndex = game.phrasePattern.length - 1;
+  } else if (terrain) {
+    s.terrain.push({ kind: 'gap', x: game.nextCluster, width: 100, height: 0 });
+  }
+  else if (gate) s.obstacles.push({
+    x: game.nextCluster, width: 22, height: 180,
+    phase: Math.floor(random(game) * 2) as Phase, kind: 'gate', groupId,
+  });
+  else if ((phraseNumber >= 4 || game.verticalComplete) && motif === 0 && game.phraseIndex === 1) {
+    s.obstacles.push({ x: game.nextCluster, width: 64, height: 36,
+      phase: null, kind: 'pulse', pulseTime: scheduledTime, groupId });
+  }
+  else recipe.forEach((phase, i) => s.obstacles.push({
+    x: game.nextCluster + i * 28, width: 26, height, phase, groupId,
+  }));
+  // Orbs follow the required jump near its apex. Gate rewards stay on the
+  // ground, so collecting never asks for an additional off-beat jump.
+  if (!crossing) addOrb(game, scheduledTime + .16, gate);
+  // A shield appears behind a gate at a fixed phrase interval. The pickup
+  // is on the ground path, visible in advance, and never depends on RNG.
+  if (gate && game.phraseIndex === 0) {
+    s.shieldPickups.push({ x: game.nextCluster + 90, y: c.groundY - c.runnerHeight / 2, radius: 12 });
+  }
+  game.phraseIndex++;
+  if (game.phraseIndex >= game.phrasePattern.length) {
+    game.phraseStart += 8;
+    game.phraseIndex = 0;
+    game.phrasePattern = LEVEL_SECTIONS[Math.floor((game.phraseStart - game.phraseOrigin) / 8) % LEVEL_SECTIONS.length].beats;
+  }
+}
+
 function extendCourse(game: Game): void {
   const s = game.state;
   const c = game.config;
-  while (game.nextCluster < Math.min(s.distance + 2400, c.finishX - 400)) {
-    const scheduledTime = game.nextBeat * BEAT_SECONDS;
-    const tier = Math.min(6, 2 + Math.floor(scheduledTime / 15));
-    const recipe = CHALLENGE_RECIPES[Math.floor(random(game) * (tier + 1))];
-    const height = 34 + Math.floor(random(game) * 4) * 4;
-    // The opening introduces one phase gate and one terrain jump. After
-    // that, complete phrases teach a recognizable action sequence instead of
-    // independently rolling every hazard. The seed varies each repetition.
-    const opening = game.phraseStart === 8;
-    // Terrain-first seeds put the gate at beat 12, leaving four beats
-    // before the next phrase. Gate-first seeds leave the terrain until 14.
-    const gateFirst = (Number(c.seed) >>> 0) % 2 === 1;
-    const openingGate = opening && game.phraseIndex === (gateFirst ? 0 : 1);
-    const openingTerrain = opening && !openingGate;
-    const motif = Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length;
-    const gate = openingGate || !opening && motif === 2;
-    const terrain = openingTerrain || !opening && (motif === 1 || motif === 3 && game.phraseIndex !== 1);
-    const groupId = game.nextObstacleGroup++;
-    const crossing = !opening && motif === 1;
-    if (crossing) {
-      // Reserve the entire phrase for a continuous void and its stepping
-      // stones. The next phrase starts its gates two beats late, leaving
-      // at least 312 units of clear ground after the crossing at speed 240.
-      if (game.nextCluster + 1140 <= c.finishX) {
-        const crossingOrigin = game.nextCluster - 90;
-        const crossingVariant = ((Number(c.seed) >>> 0) + Math.floor((game.phraseStart - 24) / 32)) % 3;
-        const crossingTerrain = longGapCrossingAt(crossingOrigin, crossingVariant);
-        s.terrain.push(...crossingTerrain);
-        s.collectibles.push(...longGapCollectiblesAt(crossingOrigin, c.groundY, crossingVariant));
-
-      }
-      game.phraseIndex = game.phrasePattern.length - 1;
-    } else if (terrain) {
-      const gap = openingTerrain ? random(game) < .5 : true;
-      s.terrain.push({
-        kind: gap ? 'gap' : 'platform', x: game.nextCluster,
-        width: openingTerrain ? (gap ? 90 : 80) : 100,
-        height: gap ? 0 : 28,
-      });
-    }
-    else if (gate) s.obstacles.push({
-      x: game.nextCluster, width: 22, height: 180,
-      phase: Math.floor(random(game) * 2) as Phase, kind: 'gate', groupId,
-    });
-    else if (game.phraseStart >= 48 && motif === 0 && game.phraseIndex === 1) {
-      s.obstacles.push({ x: game.nextCluster, width: 64, height: 36,
-        phase: null, kind: 'pulse', pulseTime: scheduledTime, groupId });
-    }
-    else recipe.forEach((phase, i) => s.obstacles.push({
-      x: game.nextCluster + i * 28, width: 26, height, phase, groupId,
-    }));
-    // Orbs follow the required jump near its apex. Gate rewards stay on the
-    // ground, so collecting never asks for an additional off-beat jump.
-    const orbTime = scheduledTime + .16;
-    if (!crossing) s.collectibles.push({
-      x: c.runnerX + courseDistance(c, orbTime) + c.runnerWidth / 2,
-      y: c.groundY - (gate ? c.runnerHeight / 2 : 110), radius: 10,
-    });
-    // A shield appears behind a gate at a fixed phrase interval. The pickup
-    // is on the ground path, visible in advance, and never depends on RNG.
-    if (gate && !openingGate && motif === 2 && game.phraseIndex === 0) {
-      s.shieldPickups.push({
-        x: game.nextCluster + 90,
-        y: c.groundY - c.runnerHeight / 2,
-        radius: 12,
-      });
-    }
-    game.phraseIndex++;
-    if (game.phraseIndex >= game.phrasePattern.length) {
-      game.phraseStart += 8;
-      game.phraseIndex = 0;
-      game.phrasePattern = LEVEL_SECTIONS[Math.floor((game.phraseStart - 16) / 8) % LEVEL_SECTIONS.length].beats;
-    }
-    game.nextBeat = game.phraseStart + game.phrasePattern[game.phraseIndex];
-    game.nextCluster = c.runnerX + courseDistance(c, game.nextBeat * BEAT_SECONDS);
+  const limit = Math.min(s.distance + 2400, c.finishX - 400);
+  while (game.nextCluster < limit && (game.holdAtX === null || game.nextCluster <= game.holdAtX)) {
+    if (game.script.length) placeScript(game, game.script.shift()!);
+    else placePhrase(game);
+    scheduleNext(game);
   }
   // Keep the live obstacle array stable. This runs on every fixed simulation
   // step, so Array#filter would otherwise allocate a fresh array 120 times a
@@ -211,8 +297,17 @@ function extendCourse(game: Game): void {
     if (pickup.x + pickup.radius >= s.distance - 100) s.shieldPickups[write++] = pickup;
   }
   s.shieldPickups.length = write;
-  write = 0;
+}
 
+/** After the shaft, leave about 2.6 s of clear runway, teach terrain, then
+ * continue with the motif phrases. */
+export function resumeAfterVertical(game: Game): void {
+  game.verticalComplete = true;
+  const resume = Math.ceil(game.state.time / BEAT_SECONDS) + 5;
+  game.script = LESSON_SCRIPT.map(item => ({ ...item, beat: item.beat + resume }));
+  startPhrases(game, resume + LESSON_BEATS);
+  game.holdAtX = null;
+  scheduleNext(game);
 }
 
 /** A one-beat warning precedes a solid, half-second floor burst.
@@ -257,19 +352,32 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
     phase: (i % 2) as Phase, groupId: i,
   })) : [];
 
+  const challenge = config.mode === 'challenge';
+  const verticalObstacles = createVerticalSectionCourse(Number(config.seed) >>> 0);
+  const script = WARMUP_SCRIPT.map(item => ({ ...item }));
+  if (!challenge) script.push(...LESSON_SCRIPT.map(item => ({ ...item, beat: item.beat + ENDLESS_LESSON_BEAT })));
   const game: Game = {
     config,
-    endless: !customLayout && config.mode !== 'challenge',
+    endless: !customLayout && !challenge,
     generated: !customLayout,
     randomState: Number(config.seed) >>> 0,
-    nextCluster: config.runnerX + courseDistance(config, 8 * BEAT_SECONDS),
-    nextBeat: 8, phraseStart: 8, phrasePattern: (Number(config.seed) >>> 0) % 2 === 1 ? [0, 6] : [0, 4], phraseIndex: 0,
+    nextCluster: 0, nextBeat: 0,
+    phraseStart: 0, phrasePattern: LEVEL_SECTIONS[0].beats, phraseIndex: 0, phraseOrigin: 0,
+    script,
+    holdAtX: challenge ? config.runnerX + VERTICAL_SECTION_START_X - 200 : null,
     nextObstacleGroup: obstacleCount,
     accumulator: 0,
     pendingInput: { jump: false, togglePhase: false },
     verticalState: null,
-    verticalObstacles: createVerticalSectionCourse(Number(config.seed) >>> 0),
+    verticalObstacles,
     verticalComplete: false,
+    verticalOrbs: createVerticalSectionOrbs(verticalObstacles),
+    verticalLength: verticalSectionLength(verticalObstacles),
+    verticalCleared: 0,
+    verticalShattered: [],
+    verticalWarp: null,
+    verticalGraceUntilY: 0,
+    verticalEnteredAt: null, verticalExitedAt: null,
     state: {
       time: 0,
       speed: config.speed,
@@ -291,8 +399,85 @@ export function createGame(overrides: Partial<GameConfig> = {}): Game {
       coyoteTime: 0,
     },
   };
+  // Challenge phrases start after the shaft; a far finite beat keeps checkpoints valid.
+  startPhrases(game, challenge ? 1e9 : ENDLESS_LESSON_BEAT + LESSON_BEATS);
+  scheduleNext(game);
   if (game.generated) extendCourse(game);
   return game;
+}
+
+/** Start the shaft at the entry wall that the rotated runway becomes. */
+export function enterVertical(game: Game): void {
+  const s = game.state;
+  const c = game.config;
+  const vertical = createVerticalSection({ width: VERTICAL_WIDTH, height: 900, obstacles: game.verticalObstacles, startX: VERTICAL_WALL_INSET });
+  vertical.phase = s.phase;
+  game.verticalGraceUntilY = VERTICAL_SAFE_RUNWAY_Y;
+  game.verticalCleared = 0;
+  s.runner.y = c.groundY - s.runner.height;
+  s.runner.vy = 0;
+  s.runner.grounded = true;
+  s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
+  game.verticalState = vertical;
+  game.verticalWarp = null;
+  game.verticalEnteredAt = s.time;
+}
+
+function stepVertical(game: Game, input: Input): GameState {
+  const s = game.state;
+  const c = game.config;
+  const dt = c.fixedStep;
+  s.time += dt;
+  s.speed = game.generated ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
+  s.level = 1 + Math.floor(s.time / 20);
+  const current = game.verticalState!;
+  let next = stepVerticalSection(current, { switchPressed: Boolean(input.togglePhase) }, {
+    width: VERTICAL_WIDTH, height: 900, obstacles: game.verticalObstacles,
+    forwardSpeed: verticalForwardSpeed(current.ticks * dt), fixedStep: dt,
+  });
+  if (input.togglePhase) s.stats.switches++;
+  s.phase = next.phase;
+  // Horizontal distance keeps the beat-synced course clock running.
+  s.distance += s.speed * dt;
+  if (game.generated) extendCourse(game);
+  let live = 0;
+  for (const orb of game.verticalOrbs) {
+    const dx = orb.x - next.x, dy = orb.y - next.y, reach = orb.radius + VERTICAL_PLAYER_RADIUS;
+    if (dx * dx + dy * dy > reach * reach) game.verticalOrbs[live++] = orb;
+    else if (orb.shield) s.powerUps = collectShield(s.powerUps);
+    else s.stats.orbs++;
+  }
+  game.verticalOrbs.length = live;
+  while (game.verticalCleared < game.verticalObstacles.length) {
+    const gate = game.verticalObstacles[game.verticalCleared];
+    if (next.y - VERTICAL_PLAYER_RADIUS <= gate.y + gate.height) break;
+    game.verticalCleared++;
+    if (!gate.passive) s.stats.cleared++;
+  }
+  if (next.crashed) {
+    const hits = verticalHits(next, game.verticalObstacles).filter(i => !game.verticalShattered.includes(i));
+    if (next.y < game.verticalGraceUntilY || hits.length === 0) next = { ...next, crashed: false };
+    else {
+      const result = resolveCollision(s.powerUps, true);
+      if (result.absorbed) {
+        s.powerUps = result.state;
+        game.verticalShattered.push(...hits);
+        next = { ...next, crashed: false };
+      } else { game.verticalState = next; s.status = 'dead'; s.deathReason = 'obstacle'; return s; }
+    }
+  }
+  game.verticalState = next;
+  if (next.y >= game.verticalLength && hasHorizontalRunway(game)) {
+    game.verticalState = null;
+    game.verticalComplete = true;
+    game.verticalExitedAt = s.time;
+    s.runner.y = c.groundY - s.runner.height;
+    s.runner.vy = 0;
+    s.runner.grounded = true;
+    s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
+    if (game.generated) { resumeAfterVertical(game); extendCourse(game); }
+  }
+  return s;
 }
 
 /** Advance exactly one fixed simulation step. Jump remains active while held; phase toggles apply once per step. */
@@ -303,41 +488,15 @@ export function step(game: Game, input: Input = {}): GameState {
 
   // The color-wall set piece temporarily replaces the horizontal playfield.
   // It uses the same fixed step and phase state, so retries/checkpoints stay deterministic.
-  if (game.verticalState) {
-    const dt = c.fixedStep;
-    s.time += dt;
-    s.speed = game.generated ? Math.min(c.maxSpeed, c.speed + s.time * 1.2) : c.speed;
-    s.level = 1 + Math.floor(s.time / 20);
-    const verticalConfig = {
-      width: VERTICAL_SECTION_WIDTH, height: 900, obstacles: game.verticalObstacles,
-      forwardSpeed: s.speed, fixedStep: c.fixedStep,
-    };
-    game.verticalState = stepVerticalSection(game.verticalState, { switchPressed: Boolean(input.togglePhase) }, verticalConfig);
-    if (input.togglePhase) s.stats.switches++;
-    s.phase = game.verticalState.phase;
-    s.distance += s.speed * dt;
-    // Keep the world generated during the scene swap so the exit runway is based
-    // on the actual upcoming horizontal course rather than a stale lookahead.
-    if (game.generated) extendCourse(game);
-    if (game.verticalState.crashed) { s.status = 'dead'; s.deathReason = 'obstacle'; return s; }
-    const last = game.verticalObstacles.at(-1);
-    if (last && game.verticalState.y >= last.y + last.height + 150 && hasHorizontalRunway(game)) {
-      game.verticalState = null;
-      game.verticalComplete = true;
-      s.runner.y = c.groundY - s.runner.height;
-      s.runner.vy = 0;
-      s.runner.grounded = true;
-      s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
-      if (game.generated) extendCourse(game);
-    }
-    return s;
-  }
+  if (game.verticalState) return stepVertical(game, input);
+  // The runner rides a clear runway through the portal; inputs wait for the shaft.
+  if (game.verticalWarp !== null) input = {};
 
   if (input.togglePhase) { s.phase = s.phase === 0 ? 1 : 0; s.stats.switches++; }
   // A small grace window makes an edge press behave like the jump the player
   // intended. Consume it on takeoff so it cannot become an airborne jump.
-  s.coyoteTime = s.runner.grounded ? .08 : Math.max(0, s.coyoteTime - c.fixedStep);
-  if (input.jump && !s.jumpHeld) s.jumpBuffer = .1;
+  s.coyoteTime = s.runner.grounded ? COYOTE_SECONDS : Math.max(0, s.coyoteTime - c.fixedStep);
+  if (input.jump && !s.jumpHeld) s.jumpBuffer = JUMP_BUFFER_SECONDS;
   if ((input.jump || s.jumpBuffer > 0) && (s.runner.grounded || s.coyoteTime > 0)) {
     s.jumpBuffer = 0;
     s.coyoteTime = 0;
@@ -383,12 +542,15 @@ export function step(game: Game, input: Input = {}): GameState {
   if (s.runner.y > c.groundY + 100) { s.status = 'dead'; s.deathReason = 'fall'; return s; }
 
   const runnerBox = { x: s.distance + s.runner.x, y: s.runner.y, width: s.runner.width, height: s.runner.height };
+  // Hazards use a slightly smaller body, so grazing an edge feels fair.
+  const inset = Math.min(HAZARD_INSET, s.runner.width * .15);
   // Sweep horizontally across this step so valid high-speed configurations
   // cannot skip narrow hazards between two fixed simulation positions.
   const collisionBox = {
-    ...runnerBox,
-    x: previousWorldX,
-    width: runnerBox.x + runnerBox.width - previousWorldX,
+    x: previousWorldX + inset,
+    y: runnerBox.y + inset,
+    width: runnerBox.x + runnerBox.width - previousWorldX - inset * 2,
+    height: runnerBox.height - inset,
   };
   for (const obstacle of s.obstacles) {
     if (obstacle.shielded) continue;
@@ -400,7 +562,7 @@ export function step(game: Game, input: Input = {}): GameState {
     if (obstacle.phase !== null && obstacle.phase !== s.phase) continue;
     const box = { x: obstacle.x, y: c.groundY - obstacle.height, width: obstacle.width, height: obstacle.height };
     // At the bottom edge of the runner the triangle is widest.
-    const depth = Math.min(box.height, runnerBox.y + runnerBox.height - box.y);
+    const depth = Math.min(box.height, collisionBox.y + collisionBox.height - box.y);
     const halfWidth = box.width * Math.max(0, depth) / (2 * box.height);
     const slice = { x: box.x + box.width / 2 - halfWidth, y: box.y, width: 2 * halfWidth, height: box.height };
     if (overlaps(collisionBox, obstacle.kind === 'gate' || obstacle.kind === 'pulse' ? box : slice)) {
@@ -435,15 +597,15 @@ export function step(game: Game, input: Input = {}): GameState {
   }
   s.shieldPickups.length = liveShieldPickups;
   if (s.distance + s.runner.x >= c.finishX) s.status = "won";
-  if (s.status === 'running' && c.mode === 'challenge' && !game.verticalComplete && s.distance >= VERTICAL_SECTION_START_X &&
-      s.runner.grounded && hasHorizontalRunway(game)) {
-    const vertical = createVerticalSection({ width: VERTICAL_SECTION_WIDTH, height: 900, obstacles: game.verticalObstacles });
-    vertical.phase = s.phase;
-    s.runner.y = c.groundY - s.runner.height;
-    s.runner.vy = 0;
-    s.runner.grounded = true;
-    s.jumpHeld = false; s.jumpBuffer = 0; s.coyoteTime = 0;
-    game.verticalState = vertical;
+  if (s.status === 'running' && c.mode === 'challenge' && !game.verticalComplete) {
+    if (game.verticalWarp === null && s.distance >= VERTICAL_SECTION_START_X && s.runner.grounded && hasHorizontalRunway(game)) {
+      game.verticalWarp = 0;
+      // The runway becomes the cyan wall, so the runner always enters the shaft cyan.
+      s.phase = 0;
+    } else if (game.verticalWarp !== null) {
+      game.verticalWarp += dt;
+      if (game.verticalWarp >= VERTICAL_WARP_SECONDS) enterVertical(game);
+    }
   }
   return s;
 }

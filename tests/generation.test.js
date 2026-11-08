@@ -1,7 +1,7 @@
 import { courseInput } from './course-solver.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, step } from '../core.ts';
+import { createGame, step, WARMUP_SCRIPT, LESSON_SCRIPT } from '../core.ts';
 import { LONG_GAP_CROSSINGS } from '../long-gap-crossing.ts';
 import { BEAT_SECONDS } from '../rhythm.ts';
 
@@ -50,7 +50,7 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   for (const seed of [1, 7, 17, 42, 71, 12345]) {
     for (const speed of [240, 280, 340, null]) {
       const game = createGame({ mode: 'challenge', seed, ...(speed ? { speed, maxSpeed: speed } : {}) });
-      const route = play(game, 80);
+      const route = play(game, 130);
       assert.ok(route.crossings.size >= 1, 'production course emits long crossings');
       assert.ok(route.postVerticalCrossings.size >= 1, `horizontal course generation and play resume after the vertical scene seed ${seed}, speed ${speed}, distance ${game.state.distance}, complete ${game.verticalComplete}`);
       assert.ok(route.stones.size >= route.crossings.size * 2,
@@ -61,34 +61,50 @@ test('six seeds are solvable at fixed and ramping speeds with collectible jump a
   }
 });
 
-test('200 seeds in both modes retain varied forgiving openings', () => {
-  const openingKinds = new Set();
-  const gatePhases = new Set();
-  for (let seed = 1; seed <= 200; seed++) {
+function features(game, seconds) {
+  const seen = new Map();
+  for (let i = 0; i < 120 * seconds; i++) {
+    for (const feature of [...game.state.obstacles, ...game.state.terrain]) seen.set(feature.x, { ...feature });
+    game.state.runner.y = -10000;
+    game.state.runner.vy = 0;
+    step(game);
+  }
+  return [...seen.values()].sort((a, b) => a.x - b.x);
+}
+
+test('the first fifteen seconds are single low spikes four beats apart in every seed and mode', () => {
+  for (let seed = 1; seed <= 200; seed += 13) {
     for (const mode of ['endless', 'challenge']) {
-      const game = createGame({ mode, seed, speed: 240, maxSpeed: 240 });
-      const first = [...game.state.obstacles, ...game.state.terrain].sort((a, b) => a.x - b.x)[0];
-      openingKinds.add(first.kind || 'spike');
-      const gate = game.state.obstacles.find(o => o.kind === 'gate');
-      const terrain = game.state.terrain[0];
-      if (gate) {
-        assert.ok(Math.abs((gate.x - game.config.runnerX) / game.config.speed - (seed % 2 ? 8 : 12) * BEAT_SECONDS) < .01, `${mode} gate seed ${seed}`);
-        gatePhases.add(gate.phase);
-      }
-      if (terrain) {
-        assert.ok(Math.abs((terrain.x - game.config.runnerX) / game.config.speed - (seed % 2 ? 14 : 8) * BEAT_SECONDS) < .01, `${mode} terrain seed ${seed}`);
-        assert.ok(['gap', 'platform'].includes(terrain.kind));
-      }
+      const game = createGame({ mode, seed });
+      const opening = features(game, 15).filter(f => f.x < game.state.distance + game.config.runnerX);
+      assert.ok(opening.length >= 5, `${mode} seed ${seed} has a real warm-up`);
+      assert.ok(opening.every(f => !f.kind && f.height <= 34 && f.phase === null), `${mode} seed ${seed}: only neutral low spikes`);
+      for (let i = 1; i < opening.length; i++) assert.ok(opening[i].x - opening[i - 1].x > 3.5 * BEAT_SECONDS * 240, 'one spike at a time');
+      assert.equal(game.state.terrain.filter(t => t.x < game.state.distance).length, 0, 'no pits in the warm-up');
     }
+  }
+  assert.ok(WARMUP_SCRIPT.some(item => item.kind === 'shield' && item.beat < 8), 'a free shield arrives before the first spike');
+});
+
+test('one gate lesson follows the warm-up, then terrain lessons, in endless mode', () => {
+  const game = createGame({ mode: 'endless', seed: 4, speed: 240, maxSpeed: 240 });
+  const all = features(game, 28);
+  const atBeat = beat => all.find(f => Math.abs(f.x - game.config.runnerX - beat * BEAT_SECONDS * 240) < 1);
+  assert.equal(atBeat(31)?.kind, 'gate');
+  assert.equal(atBeat(31).phase, 0, 'the first gate always asks for one switch from the starting color');
+  const lessons = LESSON_SCRIPT.filter(item => item.kind === 'gap' || item.kind === 'platform');
+  for (const lesson of lessons) assert.equal(atBeat(39 + lesson.beat)?.kind, lesson.kind);
+});
+
+test('200 seeds stay solvable from the authored opening to the finish', () => {
+  for (let seed = 1; seed <= 200; seed++) {
     const endless = createGame({ mode: 'endless', seed });
-    play(endless, 10);
+    play(endless, 30);
     assert.equal(endless.state.status, 'running', `endless seed ${seed}`);
     const ramping = createGame({ mode: 'challenge', seed });
-    play(ramping, 80);
+    play(ramping, 100);
     assert.equal(ramping.state.status, 'won', `seed ${seed}`);
   }
-  assert.ok(openingKinds.size >= 2, 'opening hazard type varies across seeds');
-  assert.equal(gatePhases.size, 2, 'opening gate phase varies across seeds');
 });
 
 
@@ -115,7 +131,7 @@ test('speed-ramped arrivals stay within one pixel of the beat grid', () => {
 test('phrases combine jump runs, raised landings, gaps, and spaced gates', () => {
   const game = createGame({ seed: 17, speed: 240, maxSpeed: 240 });
   const features = new Map();
-  for (let second = 0; second < 20; second++) {
+  for (let second = 0; second < 46; second++) {
     for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
       features.set(feature.x, { ...feature });
     }
@@ -123,20 +139,20 @@ test('phrases combine jump runs, raised landings, gaps, and spaced gates', () =>
     assert.equal(game.state.status, 'running');
   }
   const atBeat = beat => features.get(game.config.runnerX + beat * BEAT_SECONDS * 240);
-  for (const beat of [16, 18, 20, 22, 44]) {
+  for (const beat of [51, 53, 55, 57, 79]) {
     const feature = atBeat(beat);
     assert.ok(feature && !feature.kind, `spike cluster at beat ${beat}`);
   }
-  const origin = game.config.runnerX + 24 * BEAT_SECONDS * 240 - 90;
+  const origin = game.config.runnerX + 59 * BEAT_SECONDS * 240 - 90;
   const crossing = [...features.values()].filter(t => t.x >= origin && t.x <= origin + 1030);
   const gap = crossing.find(t => t.kind === 'gap' && t.width >= 600);
   assert.ok(gap, 'terrain phrase contains a continuous long void');
   assert.deepEqual(crossing.filter(t => t.kind === 'platform').map(t => [Math.round(t.x - origin), t.height]),
     LONG_GAP_CROSSINGS[17 % 3].filter(t => t.kind === 'platform').map(t => [t.x, t.height]));
-  assert.ok(atBeat(42).kind === 'gap' && atBeat(46).kind === 'gap');
-  assert.equal(atBeat(34).kind, 'gate');
-  assert.equal(atBeat(38).kind, 'gate');
-  assert.ok(atBeat(34).x - (gap.x + gap.width) >= 278, 'clear ground after void before gate');
+  assert.ok(atBeat(77).kind === 'gap' && atBeat(81).kind === 'gap');
+  assert.equal(atBeat(69).kind, 'gate');
+  assert.equal(atBeat(73).kind, 'gate');
+  assert.ok(atBeat(69).x - (gap.x + gap.width) >= 278, 'clear ground after void before gate');
   for (const gate of [...features.values()].filter(feature => feature.kind === 'gate')) {
     assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
       `gate at ${gate.x} has a clear approach and exit`);
@@ -147,7 +163,7 @@ test('seeded motif repetitions remain deterministic and vary their jump recipes'
   const layout = seed => {
     const game = createGame({ seed, speed: 240, maxSpeed: 240 });
     const features = new Map();
-    for (let second = 0; second < 25; second++) {
+    for (let second = 0; second < 40; second++) {
       for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
         features.set(feature.x, { ...feature, cleared: undefined });
       }
@@ -165,7 +181,7 @@ test('seeded gate phrases include repeated and changing phases with clear approa
   for (let seed = 1; seed <= 24; seed++) {
     const game = createGame({ seed, speed: 240, maxSpeed: 240 });
     const features = new Map();
-    for (let second = 0; second < 20; second++) {
+    for (let second = 0; second < 42; second++) {
       for (const feature of [...game.state.obstacles, ...game.state.terrain]) {
         features.set(feature.x, { ...feature });
       }
@@ -173,7 +189,7 @@ test('seeded gate phrases include repeated and changing phases with clear approa
       assert.equal(game.state.status, 'running', `seed ${seed}`);
     }
     const gates = [...features.values()].filter(feature => feature.kind === 'gate');
-    const phraseGates = gates.filter(gate => gate.x >= game.config.runnerX + 32 * BEAT_SECONDS * 240);
+    const phraseGates = gates.filter(gate => gate.x >= game.config.runnerX + 66 * BEAT_SECONDS * 240);
     phasePairs.add(phraseGates.slice(0, 2).map(gate => gate.phase).join(''));
     for (const gate of gates) {
       assert.ok([...features.values()].every(feature => feature === gate || Math.abs(feature.x - gate.x) >= 278),
