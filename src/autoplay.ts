@@ -21,7 +21,7 @@ function nextGate(game: Game) {
 }
 
 /** Time until the runner must leave the ground for the next jump. */
-function nextJump(game: Game): Target | null {
+export function nextJump(game: Game): Target | null {
   const s = game.state;
   const x = s.distance + s.runner.x;
   const bottom = s.runner.y + s.runner.height;

@@ -28,12 +28,25 @@ test('touch jump and phase button change simulation state, and phase release kee
       jump.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11, pointerType: 'touch', isPrimary: true }));
       const phase = document.querySelector('#phaseBtn');
       phase.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 12, pointerType: 'touch', isPrimary: false }));
-      phase.click();
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 12, pointerType: 'touch', isPrimary: false }));
     });
     expect(await page.evaluate(() => window.__touchTestState().jumpHeld)).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11, pointerType: 'touch', isPrimary: true })));
     expect(await page.evaluate(() => window.__touchTestState().jumpHeld)).toBe(false);
+  } finally {
+    await context.close();
+  }
+});
+
+test('tapping the playfield jumps, so the whole screen is a jump button', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  try {
+    const page = await context.newPage();
+    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'domcontentloaded' });
+    await page.locator('#playBtn').tap();
+    const initial = await page.evaluate(() => window.__touchTestState());
+    await page.locator('#game').tap({ position: { x: 200, y: 400 } });
+    await expect.poll(() => page.evaluate(() => window.__touchTestState().jumps)).toBeGreaterThan(initial.jumps);
   } finally {
     await context.close();
   }

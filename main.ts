@@ -1,714 +1,911 @@
-import { ART_PALETTES, GAMEPLAY_COLORS, UI_CSS_COLORS } from './src/art/palette';
 import Phaser from 'phaser';
-import { RunnerTrail, RUNNER_FACE, RUNNER_TRAIL_DURATION, RUNNER_TRAIL_SEGMENTS } from './runner-visuals';
+import { GAMEPLAY_COLORS as C, UI_CSS_COLORS } from './src/art/palette';
 import {
-  challengeProgress, createGame, step, floorPulseState,
-  VERTICAL_SECTION_START_X, VERTICAL_APPROACH_CUE_X, VERTICAL_PORTAL_X, VERTICAL_WARP_SECONDS,
+  challengeProgress, createGame, step, enterVertical,
+  VERTICAL_APPROACH_CUE_X, VERTICAL_SECTION_START_X, VERTICAL_WARP_SECONDS,
+  type Game, type Input,
 } from './core';
-import { ACHIEVEMENTS, mergeProgress } from './achievements.js';
-import { resultDetail } from './result-copy.js';
-import { viewportWorldSize } from './viewport';
-import { upcomingAction, PREVIEW_SECONDS } from './upcoming-action';
+import { mergeProgress } from './achievements.js';
+import { viewportWorldSize, runnerScreenShare, runwayScreenShare, isPortrait } from './viewport';
 import { GlowCache, glowRasterMetrics } from './glow-cache';
-import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync } from './rhythm';
+import { BeatClock, beatEnvelope, musicPosition, musicNeedsSync, BEAT_SECONDS } from './rhythm';
 import { createCheckpoint, restoreCheckpoint, type PracticeCheckpoint } from './practice';
-import { scrollingTiles, blendHex } from './src/art/scrolling-background';
-import { drawShieldMark, SHIELD_CYAN } from './powerup-visuals';
 import { collectShield } from './powerups';
-import { colorWallLayout, drawVerticalSectionVisuals } from './color-wall-visuals';
-import { createVerticalSection, createVerticalSectionCourse } from './vertical-section';
+import { createVerticalSection, createVerticalSectionCourse, createVerticalSectionOrbs, verticalSectionLength, VERTICAL_WALL_INSET, VERTICAL_WIDTH } from './vertical-section';
+import { RunnerTrail } from './runner-visuals';
+import { drawBackdrop, skyPaletteFor } from './src/render/backdrop';
+import { drawWorld, PHASE_COLORS, type GlowFn } from './src/render/world';
+import { drawShaft, shaftTransform } from './src/render/shaft';
+import { Fx } from './src/fx';
+import { Audio2, type Sfx } from './src/audio';
+import { Teacher, type Prompt } from './src/teach';
+import { botFor, courseInput, nextJump, type Bot } from './src/autoplay';
 
 for (const [name, color] of Object.entries(UI_CSS_COLORS)) document.documentElement.style.setProperty(name, color);
 
-const $ = (id: string): any => document.getElementById(id);
+const $ = (id: string) => document.getElementById(id) as HTMLElement;
+const viewportEl = $('viewport');
 const canvas = $('game') as HTMLCanvasElement;
-const surface = canvas;
-const ctx = surface.getContext('2d')!;
-// The static backdrop is composited by the browser instead of copied into every frame.
-let backdropKey = '';
-// Cache soft bloom at up to 1.5 device pixels per CSS pixel; outlines are still
-// drawn on the full-resolution canvas so their edges remain crisp while objects move.
-// Limit pixel storage across viewport sizes as well as the number of entries.
-const glowCache = new GlowCache<{ canvas: HTMLCanvasElement; pad: number }>(8 * 1024 * 1024, 128);
-function drawGlow(key: string, x: number, y: number, w: number, h: number, blur: number, color: string, draw: (g: CanvasRenderingContext2D) => void) {
- const transform = ctx.getTransform();
- const { scale, radius } = glowRasterMetrics(Math.hypot(transform.a, transform.b), viewportMetrics.dpr, blur);
- const cacheKey = [key, w, h, scale, radius, color].join(':');
- let sprite = glowCache.get(cacheKey);
- if (!sprite) {
-  const pad = Math.ceil((radius * 2 + 6) / scale);
-  const image = document.createElement('canvas');
-  image.width = Math.ceil((w + 2 * pad) * scale); image.height = Math.ceil((h + 2 * pad) * scale);
-  const g = image.getContext('2d')!;
-  g.setTransform(scale, 0, 0, scale, pad * scale, pad * scale);
-  g.shadowColor = color; g.shadowBlur = radius;
-  draw(g);
-  sprite = { canvas: image, pad };
-  glowCache.set(cacheKey, sprite, image.width * image.height);
- }
- ctx.drawImage(sprite.canvas, x - sprite.pad, y - sprite.pad, sprite.canvas.width / scale, sprite.canvas.height / scale);
-}
-
-
-let runSeed = Math.floor(Math.random() * 0x100000000);
-let selectedMode: 'challenge' | 'endless' = 'challenge';
-let game: any = createGame({ seed: runSeed, mode: selectedMode });
-let mode = 'ready';
-let attempt = 0;
-let activePractice = false;
-let checkpoints: PracticeCheckpoint[] = [];
-let progress = { bestDistance: 0, challengeBest: 0, challengeWins: 0, runs: 0, unlocked: [] };
-try { const saved = JSON.parse(localStorage.getItem('neon-dash-progress')); if (saved && typeof saved === 'object') progress = { ...progress, ...saved, unlocked: Array.isArray(saved.unlocked) ? saved.unlocked : [] }; } catch {}
-let best = Math.floor((Number(progress.bestDistance) || 0) / 10);
-let jumpHeld = false;
-const jumpPointerIds = new Set<number>();
-let keyboardJumpHeld = false;
-let jumpQueued = false;
-let phaseQueued = false;
-let accumulator = 0;
-let lastTime = 0;
-let rotation = 0;
-const runnerTrail = new RunnerTrail();
-function resetRunnerTrail() {
- runnerTrail.reset();
- runnerTrail.record(game.state.time, game.state.distance + game.state.runner.x + game.state.runner.width / 2, game.state.runner.y + game.state.runner.height / 2);
-}
-let audioEnabled = false;
-let visualEvent = { name: '', at: -10000 };
-let renderedMeters = -1;
-let renderedLevel = -1;
-let renderedPhase = -1;
-let renderedProgress = -1;
-let renderedOrbs = -1;
-let viewportMetrics = { width: 680, height: 480, dpr: 1 };
-let renderDirty = true;
-const CYAN = GAMEPLAY_COLORS.cyan;
-const VIOLET = GAMEPLAY_COLORS.violet;
+const ctx = canvas.getContext('2d')!;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const touchControls = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-const startHint = touchControls ? 'Tap PLAY to start' : 'press <kbd>SPACE</kbd> to start';
-const retryHint = touchControls ? 'Tap to retry' : 'or press <kbd>SPACE</kbd> to restart';
-document.querySelectorAll('.menu-controls').forEach(el => { if (touchControls) el.innerHTML = '<span>Tap to jump</span><span>Tap the colour button to switch</span>'; });
-$('overlayHint').innerHTML = startHint;
-$('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Switch to the opposite color to pass gates.<br>In the challenge color wall, CYAN pulls LEFT and VIOLET pulls RIGHT. Switch toward the open side to dodge blocks.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
-let vibrationEnabled = true;
-try { vibrationEnabled = localStorage.getItem('neon-dash-vibration') !== 'off'; } catch {}
-const vibrationButton = $('vibrationBtn');
-function updateVibrationButton() {
- vibrationButton.hidden = typeof navigator.vibrate !== 'function';
- vibrationButton.setAttribute('aria-pressed', String(vibrationEnabled));
- vibrationButton.setAttribute('aria-label', vibrationEnabled ? 'Disable vibration' : 'Enable vibration');
-}
-updateVibrationButton();
-vibrationButton.addEventListener('click', () => {
- vibrationEnabled = !vibrationEnabled;
- try { localStorage.setItem('neon-dash-vibration', vibrationEnabled ? 'on' : 'off'); } catch {}
- if (!vibrationEnabled && typeof navigator.vibrate === 'function') navigator.vibrate(0);
- updateVibrationButton();
-});
-function haptic(pattern) { if (vibrationEnabled && !reducedMotion && typeof navigator.vibrate === 'function') navigator.vibrate(pattern); }
-const music = new Audio(new URL('./assets/space-city.mp3', import.meta.url).href);
-music.loop = true;
-music.volume = .35;
-const beatClock = new BeatClock();
-const soundEffects = {
- jump: new Audio(new URL('./assets/sfx/jump02.ogg', import.meta.url).href),
- phase: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
- orb: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
- shield: new Audio(new URL('./assets/sfx/coin02.ogg', import.meta.url).href),
- shieldPickup: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
- death: new Audio(new URL('./assets/sfx/alarm.ogg', import.meta.url).href),
- win: new Audio(new URL('./assets/sfx/coin03.ogg', import.meta.url).href),
-};
-for (const sound of Object.values(soundEffects)) sound.volume = .45;
-const phaseButton = document.createElement('button');
-phaseButton.className = 'phase-button';
-phaseButton.id = 'phaseBtn';
-phaseButton.hidden = true;
-phaseButton.innerHTML = touchControls ? '<span>◈</span> CYAN' : '<span>◈</span> CYAN <kbd>X</kbd>';
-phaseButton.setAttribute('aria-label', touchControls ? 'Switch phase. Cyan is active.' : 'Switch phase. Cyan is active. Keyboard X or Shift.');
-$('viewport').append(phaseButton);
-const phaseHint = document.createElement('span');
-phaseHint.className = 'phase-help';
-phaseHint.hidden = true;
-phaseHint.textContent = touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES';
-$('viewport').append(phaseHint);
-const sectionCue = $('sectionCue') as HTMLDivElement;
-const verticalTutorial = document.getElementById('verticalTutorial') as HTMLDivElement;
-const TUTORIAL_KEY = 'neon-dash-vertical-tutorial';
-let verticalBlendStart = 0;
-function showVerticalTutorialIfNeeded() {
-  try {
-    if (localStorage.getItem(TUTORIAL_KEY) === 'seen') return;
-    localStorage.setItem(TUTORIAL_KEY, 'seen');
-  } catch {}
-  verticalTutorial.hidden = false;
-  window.setTimeout(() => { verticalTutorial.hidden = true; }, 4200);
-}
-function updateBest() {
- $('bestLabel').textContent = selectedMode === 'challenge' ? 'BEST' : 'BEST';
- $('best').innerHTML = selectedMode === 'challenge' ? `${progress.challengeBest || 0}<span>%</span>` : `${best}<span>m</span>`;
-}
-updateBest();
-function showObjective(newUnlocks = []) {
- const next = ACHIEVEMENTS.find(a => !progress.unlocked.includes(a.id));
- const unlocked = ACHIEVEMENTS.filter(a => newUnlocks.includes(a.id));
- const describe = text => text.replace(/(\d+) units/g, (_, n) => `${Number(n) / 10}m`).replace('neutral spikes', 'pink spikes');
- $('achievementUnlock').textContent = unlocked.length ? `✦ UNLOCKED · ${unlocked.map(a => a.name).join(' + ')}` : `${progress.unlocked.length} / ${ACHIEVEMENTS.length} ACHIEVEMENTS`;
- $('achievementGoal').textContent = next ? `NEXT · ${next.name.toUpperCase()} — ${describe(next.description)}` : 'ALL SIGNALS FOUND · CHASE A NEW BEST';
-}
-showObjective();
+const touch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const params = new URLSearchParams(location.search);
 
+/** The level is one fixed course, so best % means something across sessions. */
+const LEVEL_SEED = 7;
+type MenuMode = 'challenge' | 'endless' | 'practice';
+type Mode = 'title' | 'running' | 'paused' | 'dying' | 'over';
+
+// ---------------------------------------------------------------- storage
+const store = {
+  get(key: string, fallback: string) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } },
+  set(key: string, value: string) { try { localStorage.setItem(key, value); } catch {} },
+};
+let progress: any = { bestDistance: 0, challengeBest: 0, challengeWins: 0, runs: 0, unlocked: [] };
+try {
+  const saved = JSON.parse(store.get('neon-dash-progress', 'null'));
+  if (saved && typeof saved === 'object') progress = { ...progress, ...saved, unlocked: Array.isArray(saved.unlocked) ? saved.unlocked : [] };
+} catch {}
+let menuMode: MenuMode = (['challenge', 'endless', 'practice'] as const).find(m => m === store.get('neon-dash-mode', 'challenge')) ?? 'challenge';
+let vibration = store.get('neon-dash-vibration', 'on') !== 'off';
+
+// ---------------------------------------------------------------- systems
+const audio = new Audio2(new URL('./assets/space-city.mp3', import.meta.url).href);
+audio.enabled = store.get('neon-dash-sound', 'on') !== 'off';
+const beatClock = new BeatClock();
+const fx = new Fx();
+const teacher = new Teacher(touch);
+const trail = new RunnerTrail();
+const shaftTrail = new RunnerTrail();
+const glowCache = new GlowCache<{ canvas: HTMLCanvasElement; pad: number }>(10 * 1024 * 1024, 160);
+let view = { width: 390, height: 844, dpr: 1 };
+
+const glow: GlowFn = (key, x, y, w, h, blur, color, draw, alpha = 1) => {
+  const t = ctx.getTransform();
+  const { scale, radius } = glowRasterMetrics(Math.hypot(t.a, t.b), view.dpr, blur);
+  if (radius <= 0) return;
+  const cacheKey = `${key}:${Math.round(w)}:${Math.round(h)}:${scale}:${radius}:${color}`;
+  let sprite = glowCache.get(cacheKey);
+  if (!sprite) {
+    const pad = Math.ceil((radius * 2 + 6) / scale);
+    const image = document.createElement('canvas');
+    image.width = Math.ceil((w + 2 * pad) * scale); image.height = Math.ceil((h + 2 * pad) * scale);
+    const g = image.getContext('2d')!;
+    g.setTransform(scale, 0, 0, scale, pad * scale, pad * scale);
+    g.shadowColor = color; g.shadowBlur = radius;
+    draw(g);
+    sprite = { canvas: image, pad };
+    glowCache.set(cacheKey, sprite, image.width * image.height);
+  }
+  const previous = ctx.globalAlpha;
+  ctx.globalAlpha = previous * alpha;
+  ctx.drawImage(sprite.canvas, x - sprite.pad, y - sprite.pad, sprite.canvas.width / scale, sprite.canvas.height / scale);
+  ctx.globalAlpha = previous;
+};
+
+// ---------------------------------------------------------------- run state
+let mode: Mode = 'title';
+let runMode: MenuMode = menuMode;
+let seed = LEVEL_SEED;
+let game: Game = newGame();
+let demo: Game | null = null;
+let attempt = 0;
+let checkpoints: PracticeCheckpoint[] = [];
+let checkpointMarks: number[] = [];
+let lastCheckpointAt = 0;
+let accumulator = 0;
+let lastFrame = 0;
+let timeScale = 1;
+let bot: Bot | null = null;
+let forcedSeed: number | null = Number(params.get('seed')) || null;
+let botName = '';
+let streak = 0;
+let lastPerfectAt = -10;
+let rotation = 0;
+let squash = 1;
+let diedAt = 0;
+let prompt: Prompt | null = null;
+let cueShown = false;
+let warpStartedAt = 0;
+let shaftEnteredAt = 0;
+let shaftExitedAt = 0;
+let lastShaft: Game['verticalState'] = null;
+let lastShaftSnapshot: Game['verticalState'] = null;
+let newBest = false;
+let frameCost = 16;
+let bloom = !reducedMotion && params.get('bloom') !== 'off';
+
+// Input
+const jumpPointers = new Set<number>();
+let keyJump = false;
+let jumpQueued = false;
+let toggleQueued = false;
+
+function newGame(): Game {
+  return createGame({ seed, mode: runMode === 'endless' ? 'endless' : 'challenge' });
+}
+
+function haptic(pattern: number | number[]) {
+  if (vibration && !reducedMotion && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
+}
+function sfx(name: Sfx) { audio.play(name); }
+
+// ---------------------------------------------------------------- UI helpers
+const ui = {
+  overlay: $('overlay'), titleCard: $('titleCard'), resultCard: $('resultCard'), pause: $('pauseOverlay'),
+  teach: $('teach'), banner: $('banner'), phaseBtn: $('phaseBtn'), jumpBtn: $('jumpBtn'),
+  pauseBtn: $('pauseBtn'), soundBtn: $('soundBtn'), progressFill: $('progressFill'), progressText: $('progressText'),
+  bestMark: $('bestMark'), practiceBadge: $('practiceBadge'), status: $('status'),
+};
+let shownTeach = '';
+let shownBanner = '';
+function setTeach(text: string, big = false) {
+  if (text === shownTeach) return;
+  shownTeach = text;
+  ui.teach.hidden = !text;
+  ui.teach.textContent = text;
+  ui.teach.classList.toggle('big', big);
+  if (text) ui.status.textContent = text;
+}
+function setBanner(text: string) {
+  if (text === shownBanner) return;
+  shownBanner = text;
+  ui.banner.hidden = !text;
+  ui.banner.textContent = text;
+}
+function updateSoundButton() {
+  ui.soundBtn.textContent = audio.enabled ? '♫' : '♪';
+  ui.soundBtn.setAttribute('aria-pressed', String(audio.enabled));
+  ui.soundBtn.setAttribute('aria-label', audio.enabled ? 'Mute sound' : 'Turn sound on');
+  const pauseSound = document.getElementById('pauseSoundBtn');
+  if (pauseSound) { pauseSound.textContent = audio.enabled ? 'SOUND ON' : 'SOUND OFF'; pauseSound.setAttribute('aria-pressed', String(audio.enabled)); }
+}
+function updateVibrationButton() {
+  const button = $('vibrationBtn');
+  button.hidden = typeof navigator.vibrate !== 'function';
+  button.textContent = vibration ? 'VIBRATION ON' : 'VIBRATION OFF';
+  button.setAttribute('aria-pressed', String(vibration));
+}
+function bestText(m: MenuMode): string {
+  if (m === 'challenge') return progress.challengeBest ? `BEST ${progress.challengeBest}%` : '';
+  if (m === 'endless') return progress.bestDistance ? `BEST ${Math.floor(progress.bestDistance / 10)}m` : '';
+  return 'CHECKPOINTS SAVE AS YOU GO';
+}
+function hintText(m: MenuMode): string {
+  const tap = touch ? 'Tap to jump' : 'Space to jump';
+  if (m === 'endless') return `${tap} · how far can you go?`;
+  if (m === 'practice') return `${tap} · no records saved`;
+  return `${tap} · reach 100%`;
+}
+function refreshTitle() {
+  $('bestLine').textContent = bestText(menuMode);
+  $('overlayHint').textContent = hintText(menuMode);
+  document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => { input.checked = input.value === menuMode; });
+}
+function setPlaying(on: boolean) {
+  viewportEl.classList.toggle('playing', on);
+}
+function percent(g = game): number {
+  if (g.state.status === 'won') return 100;
+  return Math.floor(challengeProgress(g.state.distance, g.config.runnerX, g.config.finishX));
+}
+
+// ---------------------------------------------------------------- flow
+function showTitle() {
+  mode = 'title';
+  bot = null;
+  setPlaying(false);
+  ui.overlay.hidden = false; ui.overlay.classList.remove('result');
+  ui.titleCard.hidden = false; ui.resultCard.hidden = true; ui.pause.hidden = true;
+  ui.pauseBtn.hidden = true; ui.phaseBtn.hidden = true; ui.jumpBtn.hidden = true; ui.practiceBadge.hidden = true;
+  setTeach(''); setBanner('');
+  audio.music.pause();
+  runMode = menuMode;
+  attempt = 0;
+  seed = forcedSeed ?? (menuMode === 'endless' ? 1 + Math.floor(Math.random() * 0xfffffff) : LEVEL_SEED);
+  game = newGame();
+  demo = reducedMotion ? null : createGame({ seed: 3, mode: 'endless' });
+  fx.clear();
+  refreshTitle();
+}
+
+function start(options: { keepHeld?: boolean } = {}) {
+  if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur();
+  audio.unlock();
+  runMode = menuMode;
+  seed = forcedSeed ?? (runMode === 'endless' ? 1 + Math.floor(Math.random() * 0xfffffff) : LEVEL_SEED);
+  game = newGame();
+  demo = null;
+  mode = 'running';
+  attempt++;
+  checkpoints = []; checkpointMarks = []; lastCheckpointAt = 0;
+  resetRunPresentation();
+  if (!options.keepHeld) { jumpPointers.clear(); keyJump = false; }
+  jumpQueued = false; toggleQueued = false;
+  setPlaying(true);
+  ui.overlay.hidden = true; ui.pause.hidden = true;
+  ui.pauseBtn.hidden = false; ui.phaseBtn.hidden = false; ui.jumpBtn.hidden = !touch;
+  ui.practiceBadge.hidden = runMode !== 'practice';
+  ui.bestMark.hidden = runMode !== 'challenge' || !progress.challengeBest;
+  ui.bestMark.style.left = `${progress.challengeBest || 0}%`;
+  ui.status.textContent = `Attempt ${attempt}`;
+  beatClock.reset();
+  try { audio.music.currentTime = 0; } catch {}
+  playMusic();
+}
+
+function resetRunPresentation() {
+  accumulator = 0; lastFrame = 0; timeScale = 1;
+  streak = 0; rotation = 0; squash = 1; prompt = null; cueShown = false; newBest = false;
+  warpStartedAt = 0; shaftEnteredAt = 0; shaftExitedAt = 0; lastShaft = null; lastShaftSnapshot = null;
+  fx.clear(); teacher.reset();
+  trail.reset(); shaftTrail.reset();
+  recordTrail();
+  setTeach(''); setBanner('');
+  viewportEl.classList.remove('shaft');
+}
+
+function practiceRespawn() {
+  const restored = checkpoints.length ? restoreCheckpoint(checkpoints[checkpoints.length - 1]) : null;
+  game = restored || newGame();
+  attempt++;
+  mode = 'running';
+  const keep = checkpointMarks;
+  resetRunPresentation();
+  checkpointMarks = keep;
+  lastCheckpointAt = game.state.time;
+  ui.overlay.hidden = true;
+  viewportEl.classList.toggle('shaft', Boolean(game.verticalState));
+  if (game.verticalState) shaftEnteredAt = performance.now() - 2000;
+  syncMusic(true);
+}
+
+function pause() {
+  if (mode === 'running') {
+    mode = 'paused';
+    jumpPointers.clear(); keyJump = false;
+    ui.pause.hidden = false;
+    ui.pauseBtn.setAttribute('aria-pressed', 'true');
+    audio.music.pause();
+    ($('resumeBtn') as HTMLButtonElement).focus();
+  } else if (mode === 'paused') {
+    mode = 'running';
+    lastFrame = 0;
+    ui.pause.hidden = true;
+    ui.pauseBtn.setAttribute('aria-pressed', 'false');
+    playMusic();
+  }
+}
+
+function die() {
+  mode = 'dying';
+  diedAt = performance.now();
+  timeScale = 1;
+  const s = game.state;
+  sfx('death');
+  haptic([40, 30, 70]);
+  fx.shake(.75);
+  fx.flashOnce(C.danger, .5);
+  const [x, y] = runnerWorldCenter();
+  fx.burst(x, y, 26, PHASE_COLORS[s.phase], { speed: 420, life: .9, size: 7, gravity: 600, shape: 1 });
+  fx.burst(x, y, 30, C.danger, { speed: 300, life: .6, size: 3, gravity: 200 });
+  fx.burst(x, y, 12, C.white, { speed: 520, life: .35, size: 2.5, gravity: 0, shape: 2 });
+  audio.setRate(1);
+  audio.music.pause();
+  setTeach(''); setBanner('');
+  if (runMode === 'practice') return;
+  const pct = percent();
+  if (runMode === 'challenge') newBest = pct > (progress.challengeBest || 0);
+  else newBest = Math.floor(s.distance) > (progress.bestDistance || 0);
+  saveProgress(pct);
+}
+
+function saveProgress(pct: number) {
+  if (bot || runMode === 'practice') return;
+  progress = mergeProgress(progress, game.state, runMode === 'endless' ? 'endless' : 'challenge', pct);
+  store.set('neon-dash-progress', JSON.stringify(progress));
+}
+
+function showResult() {
+  mode = 'over';
+  setPlaying(false);
+  const s = game.state;
+  const won = s.status === 'won';
+  ui.overlay.hidden = false; ui.overlay.classList.add('result');
+  ui.titleCard.hidden = true; ui.resultCard.hidden = false;
+  ui.resultCard.classList.toggle('won', won);
+  ui.pauseBtn.hidden = true; ui.phaseBtn.hidden = true; ui.jumpBtn.hidden = true;
+  $('resultKicker').textContent = won ? (runMode === 'practice' ? 'PRACTICE COMPLETE' : 'LEVEL COMPLETE') : `ATTEMPT ${attempt}`;
+  $('resultScore').textContent = runMode === 'endless' ? `${Math.floor(s.distance / 10)}m` : `${won ? 100 : percent()}%`;
+  const best = $('resultBest');
+  best.classList.toggle('new', newBest);
+  best.textContent = won ? `${s.stats.orbs} ORBS` : newBest ? 'NEW BEST!' : runMode === 'practice' ? '' : bestText(runMode);
+  ui.status.textContent = won ? 'Level complete.' : `Run ended at ${$('resultScore').textContent}. Tap to retry.`;
+}
+
+function win() {
+  sfx('win'); haptic([25, 40, 25, 40, 80]);
+  fx.flashOnce(C.platform, .45);
+  const [x, y] = runnerWorldCenter();
+  for (const color of [C.gold, C.cyan, C.violet, C.platform]) fx.burst(x + 40, y - 40, 22, color, { speed: 420, life: 1.4, size: 5, gravity: 260, shape: 1 });
+  newBest = runMode === 'challenge' && (progress.challengeBest || 0) < 100;
+  saveProgress(100);
+  audio.music.pause();
+  mode = 'dying';
+  diedAt = performance.now() - 200;
+}
+
+function retry() { start({ keepHeld: false }); }
+
+// ---------------------------------------------------------------- music
 function syncMusic(force = false) {
- if (!audioEnabled || mode !== 'running' || music.readyState === 0 || music.seeking) return;
- if (force || musicNeedsSync(music.currentTime, game.state.time, music.duration)) {
-  try { music.currentTime = musicPosition(game.state.time, music.duration); } catch {}
- }
+  const m = audio.music;
+  if (!audio.enabled || mode !== 'running' || m.readyState === 0 || m.seeking) return;
+  if (force || musicNeedsSync(m.currentTime, game.state.time, m.duration)) {
+    try { m.currentTime = musicPosition(game.state.time, m.duration); } catch {}
+  }
 }
 function playMusic() {
- if (audioEnabled && mode === 'running') {
+  if (!audio.enabled || mode !== 'running') return;
   syncMusic(true);
-  music.play().then(() => syncMusic()).catch(() => {});
- }
+  audio.music.play().then(() => syncMusic()).catch(() => {});
 }
-function playSfx(name) {
- visualEvent = { name, at: performance.now() };
- haptic(name === 'death' ? [35, 35, 65] : name === 'win' ? [25, 45, 25, 45, 70] : name === 'orb' ? 18 : name === 'phase' ? 15 : 8);
- if (!audioEnabled) return;
- const sound = soundEffects[name];
- sound.currentTime = 0;
- sound.play().catch(() => {});
-}
-function updatePracticeControls() {
- $('practiceBadge').hidden = !activePractice;
- $('practiceControls').hidden = !activePractice || mode !== 'running';
- $('checkpointCount').textContent = `${checkpoints.length} checkpoint${checkpoints.length === 1 ? '' : 's'}`;
- $('removeCheckpointBtn').disabled = checkpoints.length === 0;
-}
-function clearJumpInput() {
- jumpPointerIds.clear(); keyboardJumpHeld = false; jumpHeld = false;
-}
-function start(newCircuit = false, preserveJumpInput = false) {
- if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
- activePractice = $('practiceMode').checked; checkpoints = [];
- if (newCircuit) runSeed = Math.floor(Math.random() * 0x100000000);
- game = createGame({ seed: runSeed, mode: selectedMode }); renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; mode = 'running'; attempt++; accumulator = 0; rotation = 0; verticalBlendStart = 0;
- renderDirty = true; lastTime = 0; resetRunnerTrail();
- if (preserveJumpInput) jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; else clearJumpInput();
- jumpQueued = false; phaseQueued = false; music.currentTime = 0; beatClock.reset();
- $('attempt').textContent = String(attempt).padStart(2, '0');
- $('overlay').hidden = true; $('pauseOverlay').hidden = true; $('freshBtn').hidden = true; $('pauseBtn').style.display = 'block';
- phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = false;
- sectionCue.hidden = true;
- updatePracticeControls();
- $('status').textContent = touchControls ? `Attempt ${attempt}. Tap to jump. Tap the colour button to switch.` : `Attempt ${attempt}. Jump with Space. Switch phase with X.`;
- playMusic();
-}
-function pause() {
- if (mode === 'running') { clearJumpInput(); phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; mode = 'paused'; $('pauseOverlay').hidden = false; music.pause(); $('pauseBtn').setAttribute('aria-label', 'Resume game'); $('pauseBtn').setAttribute('aria-pressed', 'true'); $('resumeBtn').focus(); updatePracticeControls(); }
- else if (mode === 'paused') { phaseButton.hidden = false; phaseHint.hidden = false; $('jumpBtn').hidden = Boolean(game.verticalState); phaseButton.classList.toggle('vertical-active', Boolean(game.verticalState)); mode = 'running'; renderDirty = true; lastTime = 0; $('pauseOverlay').hidden = true; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false'); $('pauseBtn').focus(); updatePracticeControls(); playMusic(); }
-}
-function finish() {
- const distance = meters();
- const previousUnlocks = progress.unlocked;
- const challengePercent = mode === 'won' || game.state.status === 'won' ? 100 : challengeProgress(game.state.distance, game.config.runnerX, game.config.finishX);
- if (!activePractice) {
-  progress = mergeProgress(progress, game.state, selectedMode, challengePercent);
-  best = Math.floor(progress.bestDistance / 10);
-  try { localStorage.setItem('neon-dash-progress', JSON.stringify(progress)); } catch {}
- }
- showObjective(activePractice ? [] : progress.unlocked.filter(id => !previousUnlocks.includes(id)));
- updateBest();
- mode = game.state.status;
- updatePracticeControls();
- renderDirty = true;
- playSfx(mode === 'won' ? 'win' : 'death');
- music.pause();
- $('overlay').hidden = false; $('pauseBtn').style.display = 'none'; $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
- phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; sectionCue.hidden = true;
- $('overlayKicker').textContent = activePractice ? 'PRACTICE COMPLETE · NO RECORDS SAVED' : mode === 'won' ? 'CHALLENGE COMPLETE · MEDAL EARNED' : resultDetail({ mode: selectedMode, attempt, distance, level: game.state.level, challengePercent });
- $('overlayTitle').textContent = mode === 'won' ? 'COMPLETE!' : 'TRY AGAIN';
- $('overlayDescription').innerHTML = activePractice ? `PRACTICE RUN COMPLETE · ${game.state.stats.orbs} ORBS COLLECTED<br>Official records and achievements are unchanged.` : mode === 'won' ? `🏅 FINISHER MEDAL · ${game.state.stats.orbs} ORBS COLLECTED<br>Challenge complete! Ready for another run?` : `PINK SPIKES ARE ALWAYS DANGEROUS · ${game.state.stats?.cleared || 0} CLEARED · ${game.state.stats.orbs} ORBS<br>Practice the same circuit or choose a random one.`;
- $('playLabel').textContent = 'RETRY SAME CIRCUIT';
- $('freshBtn').hidden = false;
- $('seedText').textContent = `CIRCUIT SEED · ${runSeed}`;
- $('overlayHint').innerHTML = retryHint;
- $('status').textContent = mode === 'won' ? (touchControls ? 'Level complete! Tap to play again.' : 'Level complete! Press Space to play again.') : `Run ended at ${distance} meters. ${touchControls ? 'Tap to try again.' : 'Press Space to try again.'}`;
-}
-if (import.meta.env.DEV) {
- (window as any).__layoutTestState = (state: 'dead' | 'won') => { game.state.status = state; finish(); };
- (window as any).__setBackdropDistance = (distance: number) => { game.state.distance = distance; renderDirty = true; };
- (window as any).__setTestTerrain = (terrain: import('./core').Terrain[]) => { game.state.terrain = terrain; renderDirty = true; };
- (window as any).__setShieldCharged = (charged = true) => {
-  game.state.powerUps = charged ? collectShield(game.state.powerUps) : { ...game.state.powerUps, shieldCharges: 0 };
-  renderDirty = true;
- };
- (window as any).__touchTestState = () => ({ phase: game.state.phase, jumps: game.state.stats.jumps, runnerY: game.state.runner.y, jumpHeld });
- (window as any).__enterVerticalTest = (seed = 1) => {
-  game.verticalObstacles = createVerticalSectionCourse(seed);
-  game.verticalComplete = false;
-  game.verticalState = createVerticalSection({ width: 420, height: 900, obstacles: game.verticalObstacles });
-  game.verticalState.phase = game.state.phase;
-  renderDirty = true;
- };
- (window as any).__verticalTestState = () => ({
-  active: Boolean(game.verticalState), complete: game.verticalComplete, phase: game.verticalState?.phase ?? game.state.phase,
-  x: game.verticalState?.x ?? null, y: game.verticalState?.y ?? null,
-  firstSafePhase: game.verticalObstacles.length ? (game.verticalObstacles[0].x === 0 ? 1 : 0) : 0,
- });
-}
-function meters() { return Math.floor(game.state.distance / 10); }
-function jump() { if (mode === 'ready' || mode === 'dead' || mode === 'won') start(false, true); if (mode === 'running') jumpQueued = true; }
-function showTitle() {
- mode = 'ready'; activePractice = false; checkpoints = []; accumulator = 0; lastTime = 0;
- clearJumpInput(); jumpQueued = false; phaseQueued = false; music.pause();
- $('overlay').hidden = false; $('pauseOverlay').hidden = true; $('pauseBtn').style.display = 'none';
- $('pauseBtn').setAttribute('aria-label', 'Pause game'); $('pauseBtn').setAttribute('aria-pressed', 'false');
- phaseButton.hidden = true; phaseHint.hidden = true; $('jumpBtn').hidden = true; updatePracticeControls();
- sectionCue.hidden = true;
- runSeed = Math.floor(Math.random() * 0x100000000);
- attempt = 0; $('attempt').textContent = '01';
- game = createGame({ seed: runSeed, mode: selectedMode });
- rotation = 0; resetRunnerTrail();
- renderDirty = true;
- renderedProgress = -1; renderedMeters = -1; renderedLevel = -1;
- $('overlayKicker').textContent = selectedMode === 'challenge' ? 'CHALLENGE / REACH THE FINISH' : 'ENDLESS / GO FOR DISTANCE';
- $('overlayTitle').textContent = 'NEON DASH';
- $('overlayDescription').innerHTML = 'Jump spikes and gaps; land on platforms. Switch to the opposite color to pass gates.<br>In the challenge color wall, CYAN pulls LEFT and VIOLET pulls RIGHT. Switch toward the open side to dodge blocks.<br>Collect cyan shields to block one spike or gate cluster. Gaps and falls still hurt.<br>Pink spikes always hurt.';
- $('playLabel').textContent = 'PLAY'; $('freshBtn').hidden = true; $('seedText').textContent = '';
- $('overlayHint').innerHTML = startHint; updateBest();
-}
-document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
- selectedMode = input.value as 'challenge' | 'endless'; showTitle();
-}));
-$('titleBtn').addEventListener('click', () => { showTitle(); $('playBtn').focus(); });
-$('checkpointBtn').addEventListener('click', () => {
- if (!activePractice || mode !== 'running') return;
- $('checkpointBtn').blur();
- const checkpoint = createCheckpoint(game);
- if (checkpoint) { checkpoints.push(checkpoint); updatePracticeControls(); $('status').textContent = `Checkpoint ${checkpoints.length} saved.`; }
-});
-$('removeCheckpointBtn').addEventListener('click', () => {
- if (!activePractice || mode !== 'running' || !checkpoints.length) return;
- $('removeCheckpointBtn').blur();
- checkpoints.pop(); updatePracticeControls(); $('status').textContent = 'Last checkpoint removed.';
-});
-function practiceRespawn() {
- const restored = checkpoints.length ? restoreCheckpoint(checkpoints[checkpoints.length - 1]) : null;
- game = restored || createGame({ seed: runSeed, mode: selectedMode });
- attempt++; $('attempt').textContent = String(attempt).padStart(2, '0');
- resetRunnerTrail();
- accumulator = 0; lastTime = 0; clearJumpInput(); jumpQueued = false; phaseQueued = false; rotation = 0;
- renderedProgress = -1; renderedMeters = -1; renderedLevel = -1; renderedOrbs = -1; renderDirty = true;
- beatClock.reset(); syncMusic(true);
- $('status').textContent = restored ? `Attempt ${attempt}. Returned to checkpoint.` : `Attempt ${attempt}. Returned to start.`;
-}
-$('playBtn').addEventListener('click', () => start(false));
-$('freshBtn').addEventListener('click', () => start(true));
-$('restartBtn').addEventListener('click', () => start(false));
-$('pauseBtn').addEventListener('click', pause);
-$('resumeBtn').addEventListener('click', pause);
- $('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpPointerIds.add(e.pointerId); jumpHeld = true; jump(); });
-phaseButton.addEventListener('click', e => { e.stopPropagation(); if (mode === 'running') phaseQueued = true; });
-$('soundBtn').addEventListener('click', () => {
- if (audioEnabled && !music.paused) beatClock.sample(game.state.time, music.currentTime);
- audioEnabled = !audioEnabled;
- $('soundBtn').textContent = audioEnabled ? '♫' : '♪';
- $('soundBtn').setAttribute('aria-label', audioEnabled ? 'Mute sound' : 'Enable sound');
- $('soundBtn').setAttribute('aria-pressed', String(audioEnabled));
- if (audioEnabled) playMusic(); else music.pause();
-});
-window.addEventListener('keydown', e => {
- if (['Space', 'ArrowUp', 'KeyW', 'KeyX', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape', 'KeyR'].includes(e.code)) {
-  if ((e.target instanceof HTMLButtonElement && e.code === 'Space') || e.target instanceof HTMLInputElement) return;
-  e.preventDefault(); if (e.repeat) return;
-  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyboardJumpHeld = true; jumpHeld = true; jump(); }
-  else if (['KeyX','ShiftLeft','ShiftRight'].includes(e.code)) { if (mode === 'running') phaseQueued = true; }
-  else if (e.code === 'KeyR') start(); else pause();
- }
-});
-window.addEventListener('keyup', e => { if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyboardJumpHeld = false; jumpHeld = jumpPointerIds.size > 0; } });
-canvas.addEventListener('pointerdown', e => { e.preventDefault(); jumpPointerIds.add(e.pointerId); jumpHeld = true; jump(); });
-window.addEventListener('pointerup', e => { jumpPointerIds.delete(e.pointerId); jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; });
-window.addEventListener('pointercancel', e => { jumpPointerIds.delete(e.pointerId); jumpHeld = jumpPointerIds.size > 0 || keyboardJumpHeld; });
-window.addEventListener('blur', () => { jumpPointerIds.clear(); keyboardJumpHeld = false; jumpHeld = false; if (mode === 'running') pause(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'running') pause(); });
 
-function render(time) {
- const { width, height } = viewportMetrics;
- const worldOffsetY = height * (viewportMetrics.width < 500 ? .62 : .72) - game.config.groundY;
- ctx.setTransform(surface.width/width,0,0,surface.height/height,0,0);
- const s = game.state;
- const c = game.config;
- const glowUnit = c.runnerWidth * surface.width / width;
- const color = s.phase === 0 ? CYAN : VIOLET;
- if (renderedPhase !== s.phase) {
-  document.documentElement.style.setProperty('--phase', color);
-  renderedPhase = s.phase;
- }
- const clock = reducedMotion ? 0 : time * .001;
- const beatTime = beatClock.sample(s.time, audioEnabled && !music.paused ? music.currentTime : undefined);
- const pulse = reducedMotion ? 1 : .82 + beatEnvelope(beatTime) * .18;
- const section = Math.floor(s.distance / 4800);
- const currentPalette = ART_PALETTES[section % ART_PALETTES.length];
- const nextPalette = ART_PALETTES[(section + 1) % ART_PALETTES.length];
- const fade = Math.round(Math.max(0, (s.distance % 4800 - 3600) / 1200) * 64) / 64;
- const palette = { ...currentPalette, ...Object.fromEntries(['top', 'horizon', 'floor', 'pink', 'blue'].map(key => [key, blendHex(currentPalette[key], nextPalette[key], fade)])) };
- const key = `${canvas.clientWidth}:${canvas.clientHeight}:${worldOffsetY}:${palette.top}:${palette.horizon}:${palette.floor}:${palette.pink}:${palette.blue}`;
- if (key !== backdropKey) {
-  const groundPx = (worldOffsetY + c.groundY) * canvas.clientHeight / height;
-  const floorEndPx = (worldOffsetY + height) * canvas.clientHeight / height;
-  canvas.style.background = `linear-gradient(to bottom, transparent ${groundPx}px, ${palette.floor} ${groundPx}px, ${GAMEPLAY_COLORS.void} ${floorEndPx}px), radial-gradient(circle ${canvas.clientWidth * .65}px at 65% 48%, ${palette.pink}28 0%, ${palette.blue}0d 48%, ${palette.blue}00 100%), linear-gradient(to bottom, ${palette.top} 0%, ${palette.horizon} 70%, ${palette.floor} 100%)`;
-  backdropKey = key;
- }
- ctx.clearRect(0, 0, width, height);
- if (game.verticalState) {
-  sectionCue.hidden = true; verticalTutorial.hidden = true;
-  $('jumpBtn').hidden = true;
-  phaseButton.hidden = false;
-  phaseHint.hidden = false;
-  phaseHint.textContent = touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE';
-  phaseButton.classList.add('vertical-active');
-  const wallLayout = colorWallLayout(width, height);
-  const visibleCourseHeight = wallLayout.height / (wallLayout.width / 420);
-  drawVerticalSectionVisuals(ctx, {
-   width: 420, state: game.verticalState, obstacles: game.verticalObstacles,
-   cameraY: game.verticalState.y - visibleCourseHeight * .25,
-   primaryColor: CYAN, secondaryColor: VIOLET, time: game.state.time, reducedMotion,
-  });
-  const s = game.state;
-  const progress = challengeProgress(s.distance, game.config.runnerX, game.config.finishX);
-  if (Math.floor(progress) !== renderedProgress) { renderedProgress = Math.floor(progress); $('progressFill').style.width = `${renderedProgress}%`; }
-  $('progressText').textContent = `${Math.floor(progress)}%`;
-  $('progressText').setAttribute('aria-label', `Challenge ${Math.floor(progress)} percent complete`);
-  $('levelText').textContent = 'COLOR WALL';
-  $('orbCount').textContent = String(s.stats.orbs);
-  $('shieldIndicator').hidden = s.powerUps.shieldCharges === 0;
-  const phaseName = s.phase === 0 ? 'CYAN' : 'VIOLET';
-  const color = s.phase === 0 ? CYAN : VIOLET;
-  document.documentElement.style.setProperty('--phase', color);
-  phaseButton.dataset.phase = phaseName;
-  phaseButton.innerHTML = touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
-  phaseButton.style.color = color;
-  phaseButton.setAttribute('aria-label', `Switch color. ${phaseName} is active. Switch to move toward the other wall.${touchControls ? '' : ' Keyboard X or Shift.'}`);
-  return;
- }
- const cameraX = canvas.clientWidth / canvas.clientHeight < .75 ? Math.min(0, width * .16 - c.runnerX) : 0;
- ctx.save(); ctx.translate(cameraX, worldOffsetY);
- // Monumental rings and angular skylines remain behind the collision silhouettes.
- for (const tile of scrollingTiles(s.distance * .07 - width * .68, width, 235, 1, 1)) {
-  const i = tile.index;
-  const x = tile.x;
-  const y = 92 + tile.seed * 56;
-  ctx.strokeStyle = i % 2 ? palette.blue + '42' : palette.pink + '52';
-  ctx.lineWidth = i % 3 === 0 ? 2 : 1;
-  ctx.beginPath(); ctx.arc(x, y, 83 + tile.seed * 20, Math.PI * 1.08, Math.PI * 2.84); ctx.stroke();
-  ctx.strokeStyle = palette.blue + '70';
-  ctx.beginPath(); ctx.arc(x, y, 89 + tile.seed * 20, Math.PI * 1.15, Math.PI * 1.35); ctx.stroke();
- }
- for (const tile of scrollingTiles(s.distance, width - cameraX, 110, .18, 1)) {
-  const i = tile.index;
-  const x = tile.x;
-  const h = 55 + tile.seed * 84;
-  ctx.fillStyle = GAMEPLAY_COLORS.void + 'd9';
-  ctx.strokeStyle = (i % 2 ? palette.blue : palette.pink) + '65'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY - h);
-  ctx.lineTo(x + 30, c.groundY - h - 22); ctx.lineTo(x + 76, c.groundY - h - 22); ctx.lineTo(x + 76, c.groundY); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.strokeStyle = (i % 3 ? palette.blue : palette.pink) + '88';
-  ctx.beginPath(); ctx.moveTo(x + 13, c.groundY - h + 9); ctx.lineTo(x + 13, c.groundY - 17); ctx.lineTo(x + 29, c.groundY - 17); ctx.stroke();
-  ctx.fillStyle = palette.blue + '77'; ctx.fillRect(x + 52, c.groundY - h, 4, 4);
- }
- ctx.lineWidth = .7; ctx.strokeStyle = palette.blue + '22';
- ctx.beginPath();
- for (let x = -(s.distance * .32 % 65); x < width; x += 65) { ctx.moveTo(x, -worldOffsetY); ctx.lineTo(x, c.groundY); }
- ctx.stroke(); ctx.beginPath();
- for (let y = -worldOffsetY; y < c.groundY; y += 65) { ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); }
- ctx.stroke();
- // Cut holes in the runway so gaps remain legible against the background.
- ctx.save(); ctx.beginPath();
- let floorStart = 0;
- const worldRight = width - cameraX;
- // Terrain is appended in world order by the simulation. Avoid allocating and
- // sorting a filtered copy on every animation frame.
- for (const gap of s.terrain) {
-  if (gap.kind !== 'gap') continue;
-  const left = Math.max(0, Math.min(worldRight, gap.x - s.distance));
-  const right = Math.max(0, Math.min(worldRight, gap.x + gap.width - s.distance));
-  if (right <= floorStart || left >= worldRight) continue;
-  ctx.rect(floorStart, c.groundY - 2, Math.max(0, left - floorStart), height);
-  floorStart = right;
- }
- ctx.rect(floorStart, c.groundY - 2, Math.max(0, worldRight - floorStart), height); ctx.clip();
- ctx.strokeStyle = palette.pink + '58'; ctx.lineWidth = 1;
- ctx.beginPath();
- for (let x = -(s.distance % 70); x < width + 100; x += 70) { ctx.moveTo(x, c.groundY + 10); ctx.lineTo(x - 95, height); }
- ctx.stroke(); ctx.beginPath();
- for (let y = c.groundY + 18; y < height; y += 30) { ctx.moveTo(0, y); ctx.lineTo(width - cameraX, y); }
- ctx.stroke();
- // A hot white core and wide bloom make the runway read as emitted light.
- ctx.save();
- drawGlow('floor', 0, c.groundY + .5, worldRight, 0, glowUnit * pulse, color, g => { g.strokeStyle = color; g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(worldRight, 0); g.stroke(); });
- ctx.strokeStyle = color; ctx.lineWidth = 3;
- ctx.beginPath(); ctx.moveTo(0, c.groundY + .5); ctx.lineTo(worldRight, c.groundY + .5); ctx.stroke();
- ctx.shadowBlur = 0; ctx.lineWidth = 1; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.stroke();
- ctx.globalAlpha = .35; ctx.strokeStyle = palette.pink; ctx.beginPath(); ctx.moveTo(0, c.groundY + 7); ctx.lineTo(worldRight, c.groundY + 7); ctx.stroke(); ctx.restore();
- ctx.restore();
- const portalScreenX = VERTICAL_SECTION_START_X - s.distance;
- if (selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState && portalScreenX > -140 && portalScreenX < worldRight + 140) {
-  const sway = reducedMotion ? 0 : Math.sin(clock * 3.2) * 5;
-  const archW = 68, archH = 196;
-  ctx.save();
-  drawGlow('v-portal', portalScreenX - archW / 2, c.groundY - archH + sway, archW, archH, glowUnit * 1.15, CYAN, g => {
-   g.strokeStyle = CYAN; g.lineWidth = 3.5;
-   g.beginPath(); g.moveTo(0, archH); g.lineTo(archW / 2, 0); g.lineTo(archW, archH); g.closePath(); g.stroke();
-   g.strokeStyle = VIOLET; g.lineWidth = 1.5; g.setLineDash([5, 5]);
-   g.beginPath(); g.moveTo(archW * .18, archH - 10); g.lineTo(archW / 2, 24); g.lineTo(archW * .82, archH - 10); g.stroke();
-  });
-  ctx.strokeStyle = CYAN; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(portalScreenX - archW / 2, c.groundY + sway); ctx.lineTo(portalScreenX, c.groundY - archH + sway); ctx.lineTo(portalScreenX + archW / 2, c.groundY + sway); ctx.stroke();
-  ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.font = `700 ${Math.max(10, 12 * width / (canvas.clientWidth || 1))}px sans-serif`; ctx.textAlign = 'center';
-  ctx.fillText(game.verticalWarp != null ? '↑ ↑' : 'WALL', portalScreenX, c.groundY - archH - 12 + sway);
-  ctx.restore();
- }
- if (game.verticalWarp != null && game.verticalWarp < VERTICAL_WARP_SECONDS) {
-  const warpT = game.verticalWarp / VERTICAL_WARP_SECONDS;
-  ctx.save(); ctx.fillStyle = `rgba(55,255,231,${.07 + warpT * .12})`; ctx.fillRect(0, 0, width, height); ctx.restore();
- }
- for (const terrain of s.terrain) {
-  const x = terrain.x - s.distance; if (x < -terrain.width || x > worldRight) continue;
-  ctx.save();
-  if (terrain.kind === 'gap') {
-   ctx.fillStyle = GAMEPLAY_COLORS.void; ctx.fillRect(x, c.groundY, terrain.width, height);
-   ctx.strokeStyle = GAMEPLAY_COLORS.danger; ctx.lineWidth = 2; ctx.beginPath();
-   ctx.moveTo(x, c.groundY); ctx.lineTo(x, c.groundY + 12);
-   ctx.moveTo(x + terrain.width, c.groundY); ctx.lineTo(x + terrain.width, c.groundY + 12); ctx.stroke();
-  } else {
-   drawGlow('platform', x, c.groundY - terrain.height, terrain.width, terrain.height, glowUnit * .5, GAMEPLAY_COLORS.platform, g => { g.fillStyle = GAMEPLAY_COLORS.platformFill; g.strokeStyle = GAMEPLAY_COLORS.platform; g.lineWidth = 2; g.fillRect(0, 0, terrain.width, terrain.height); g.strokeRect(0, 0, terrain.width, terrain.height); });
-   ctx.fillStyle = GAMEPLAY_COLORS.platformFill; ctx.strokeStyle = GAMEPLAY_COLORS.platform; ctx.lineWidth = 2;
-   ctx.fillRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
-   ctx.strokeRect(x, c.groundY - terrain.height, terrain.width, terrain.height);
-   ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 3, c.groundY - terrain.height + 3); ctx.lineTo(x + terrain.width - 3, c.groundY - terrain.height + 3); ctx.stroke();
-  }
-  ctx.restore();
- }
- for (const obstacle of s.obstacles) {
-  if (obstacle.shielded) continue;
-  const x = obstacle.x - s.distance; if (x < -60 || x > worldRight + 60) continue;
-  if (obstacle.kind === 'pulse') {
-   const pulseState = floorPulseState(obstacle, s.time);
-   const warning = pulseState === 'warning';
-   const active = pulseState === 'active';
-   ctx.save();
-   ctx.strokeStyle = GAMEPLAY_COLORS.danger;
-   ctx.fillStyle = active || warning ? GAMEPLAY_COLORS.danger : GAMEPLAY_COLORS.off;
-   ctx.lineWidth = 2;
-   ctx.globalAlpha = active || warning ? 1 : .55;
-   ctx.fillRect(x, c.groundY - (active ? obstacle.height : 4), obstacle.width, active ? obstacle.height : 4);
-   if (active) {
-    ctx.strokeStyle = GAMEPLAY_COLORS.white;
-    ctx.strokeRect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
-   } else if (warning) {
-    ctx.setLineDash([4, 4]);
-    ctx.strokeRect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
-    ctx.setLineDash([]);
-    const labelSize = Math.max(12, 12 * viewportMetrics.width / canvas.getBoundingClientRect().width);
-    ctx.font = `bold ${labelSize}px sans-serif`; ctx.textAlign = 'center';
-    ctx.fillText('JUMP ↑', x + obstacle.width / 2, c.groundY - obstacle.height - 8);
-   }
-   ctx.restore();
-   continue;
-  }
-  const neutral = obstacle.phase == null;
-  const active = neutral || obstacle.phase === s.phase; const oc = neutral ? GAMEPLAY_COLORS.danger : obstacle.phase === 0 ? CYAN : VIOLET;
-  ctx.save(); ctx.globalAlpha = 1; if (!active) ctx.setLineDash([4, 3]);
-  if (active) drawGlow(obstacle.kind, x, c.groundY - obstacle.height, obstacle.width, obstacle.height, glowUnit * .85 * pulse, oc, g => {
-   const gradient = g.createLinearGradient(0, 0, 0, obstacle.height); gradient.addColorStop(0, oc + 'bb'); gradient.addColorStop(1, oc + '18');
-   g.fillStyle = gradient; g.strokeStyle = oc; g.lineWidth = 2.6; g.beginPath();
-   if (obstacle.kind === 'gate') g.rect(0, 0, obstacle.width, obstacle.height);
-   else { g.moveTo(0, obstacle.height); g.lineTo(obstacle.width / 2, 0); g.lineTo(obstacle.width, obstacle.height); g.closePath(); }
-   g.fill(); g.stroke();
-  });
-  ctx.strokeStyle = active ? oc : GAMEPLAY_COLORS.off;
-  if (!active) {
-   const fill = ctx.createLinearGradient(x, c.groundY - obstacle.height, x, c.groundY);
-   fill.addColorStop(0, oc + '16'); fill.addColorStop(1, oc + '08');
-   ctx.fillStyle = fill;
-  }
-  ctx.lineWidth = active ? 2.6 : 1.2;
-  ctx.beginPath();
-  if (obstacle.kind === 'gate') {
-   ctx.rect(x, c.groundY - obstacle.height, obstacle.width, obstacle.height);
-  } else {
-   ctx.moveTo(x, c.groundY); ctx.lineTo(x + obstacle.width / 2, c.groundY - obstacle.height); ctx.lineTo(x + obstacle.width, c.groundY); ctx.closePath();
-  }
-  // Active sprites already contain their translucent fill; draw only the crisp contour again.
-  if (!active) ctx.fill();
-  ctx.stroke();
-  if (obstacle.kind === 'gate') {
-   ctx.shadowBlur = 0; ctx.strokeStyle = oc; ctx.lineWidth = 1;
-   for (let y = c.groundY - obstacle.height + 12; y < c.groundY - 5; y += 18) { ctx.beginPath(); ctx.moveTo(x + 4, y); ctx.lineTo(x + obstacle.width - 4, y + 7); ctx.stroke(); }
-  }
-  if (active) { ctx.shadowBlur = 0; ctx.strokeStyle = GAMEPLAY_COLORS.white; ctx.lineWidth = .8; ctx.stroke(); ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(x + obstacle.width / 2 - 1, c.groundY - obstacle.height + 6, 2, 8); }
-  ctx.restore();
- }
- for (const orb of s.collectibles) {
-  const x = orb.x - s.distance;
-  if (x < -orb.radius - 20 || x > worldRight + orb.radius + 20) continue;
-  const bob = reducedMotion ? 0 : Math.sin(clock * 4 + orb.x * .02) * 3;
-  ctx.save(); ctx.translate(x, orb.y + bob); ctx.rotate(Math.PI / 4 + (reducedMotion ? 0 : Math.sin(clock * 2 + orb.x) * .12));
-  drawGlow('orb', -orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3, glowUnit * .7 * pulse, GAMEPLAY_COLORS.gold, g => { g.fillStyle = GAMEPLAY_COLORS.reward; g.strokeStyle = GAMEPLAY_COLORS.gold; g.lineWidth = 2; g.fillRect(0, 0, orb.radius * 1.3, orb.radius * 1.3); g.strokeRect(0, 0, orb.radius * 1.3, orb.radius * 1.3); });
-  ctx.fillStyle = GAMEPLAY_COLORS.reward; ctx.strokeStyle = GAMEPLAY_COLORS.gold; ctx.lineWidth = 2;
-  ctx.fillRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3); ctx.strokeRect(-orb.radius * .65, -orb.radius * .65, orb.radius * 1.3, orb.radius * 1.3);
-  ctx.shadowBlur = 0; ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.fillRect(-2, -2, 4, 4); ctx.restore();
- }
- for (const pickup of s.shieldPickups) {
-  const x = pickup.x - s.distance;
-  if (x < -pickup.radius - 20 || x > worldRight + pickup.radius + 20) continue;
-  const bob = reducedMotion ? 0 : Math.sin(clock * 4 + pickup.x * .02) * 3;
-  const y = pickup.y + bob;
-  drawGlow('shield-pickup', x - pickup.radius, y - pickup.radius, pickup.radius * 2, pickup.radius * 2,
-   glowUnit * .8 * pulse, SHIELD_CYAN, g => drawShieldMark(g, pickup.radius, pickup.radius, pickup.radius * 1.7));
-  drawShieldMark(ctx, x, y, pickup.radius * 1.7);
- }
- const finishX=c.finishX-s.distance;if(Number.isFinite(c.finishX)&&finishX<worldRight){ctx.strokeStyle=GAMEPLAY_COLORS.platform;ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(finishX,70);ctx.lineTo(finishX,c.groundY);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=GAMEPLAY_COLORS.platform;ctx.font=`${Math.max(9, 12 * width / (canvas.clientWidth || 1))}px sans-serif`;ctx.fillText('FINISH',finishX-15,60);}
- const r=s.runner;
- if(mode==='running'){
-  // Draw newest-to-oldest layers from the same fixed-step positions used by simulation.
-  // Overlapping tapered squares create a continuous ribbon without per-frame allocations.
-  ctx.save();ctx.globalCompositeOperation='lighter';
-  for(let i=RUNNER_TRAIL_SEGMENTS;i>=1;i--){
-   const age=RUNNER_TRAIL_DURATION*i/RUNNER_TRAIL_SEGMENTS;
-   const sample=runnerTrail.at(s.time-age);if(!sample)continue;
-   const fade=1-i/(RUNNER_TRAIL_SEGMENTS+1), size=r.width*(.42+.58*fade);
-   ctx.globalAlpha=(reducedMotion?.1:.32)*fade;
-   ctx.fillStyle=color;
-   ctx.fillRect(sample.x-s.distance-size/2,sample.y-size/2,size,size);
-   if(!reducedMotion && i%3===1){ctx.globalAlpha=.12*fade;ctx.fillRect(sample.x-s.distance-size*.28,sample.y-size*.28,size*.56,size*.56);}
-  }
-  ctx.restore();
- }
- if(!reducedMotion && !r.grounded && mode==='running')rotation+=.045;else if(r.grounded)rotation=Math.round(rotation/(Math.PI/2))*Math.PI/2;
- ctx.save();ctx.translate(r.x+r.width/2,r.y+r.height/2);ctx.rotate(rotation);
- const runnerFill=s.phase===0?GAMEPLAY_COLORS.runnerCyanFill:GAMEPLAY_COLORS.runnerVioletFill;
- drawGlow('runner', -r.width/2, -r.height/2, r.width, r.height, glowUnit*pulse, color, g => { g.fillStyle=runnerFill; g.strokeStyle=color; g.lineWidth=3; g.fillRect(0,0,r.width,r.height); g.strokeRect(0,0,r.width,r.height); });
- ctx.fillStyle=runnerFill;ctx.strokeStyle=color;ctx.lineWidth=3;
- ctx.fillRect(-r.width/2,-r.height/2,r.width,r.height);ctx.strokeRect(-r.width/2,-r.height/2,r.width,r.height);
- ctx.shadowBlur=0;ctx.strokeStyle=GAMEPLAY_COLORS.white;ctx.lineWidth=1;ctx.strokeRect(-r.width/2+3,-r.height/2+3,r.width-6,r.height-6);
- ctx.fillStyle=GAMEPLAY_COLORS.white;for(const [x,y,w,h] of RUNNER_FACE)ctx.fillRect(x,y,w,h);ctx.restore();
- // Colored sparks drift independently of the world; counts stay fixed on mobile.
- for(let i=0;i<24;i++){
-  ctx.fillStyle=[CYAN,palette.pink,GAMEPLAY_COLORS.platform,palette.blue][i%4];ctx.globalAlpha=.25+(i%3)*.13;
-  const x=(i*137+width-(s.distance*.12+clock*9)%width)%width;
-  const y=15+(i*43)%255+Math.sin(clock+i)*4;
-  ctx.fillRect(x,y,i%5===0?3:1.5,i%5===0?3:1.5);
- }ctx.globalAlpha=1;
- const effectAge=(time-visualEvent.at)/1000;
- if(!reducedMotion && effectAge>=0 && effectAge<.5 && ['phase','death','win','orb','shield','shieldPickup'].includes(visualEvent.name)){
-  ctx.save();ctx.globalAlpha=(1-effectAge*2)*.65;ctx.strokeStyle=visualEvent.name==='death'?palette.pink:visualEvent.name==='orb'?GAMEPLAY_COLORS.gold:visualEvent.name==='shieldPickup'?SHIELD_CYAN:visualEvent.name==='shield'?GAMEPLAY_COLORS.white:color;ctx.lineWidth=2;
-  const cx=r.x+r.width/2,cy=r.y+r.height/2;
-  for(let i=0;i<12;i++){const angle=i*Math.PI/6;const radius=18+effectAge*130;ctx.beginPath();ctx.moveTo(cx+Math.cos(angle)*radius,cy+Math.sin(angle)*radius);ctx.lineTo(cx+Math.cos(angle)*(radius+9),cy+Math.sin(angle)*(radius+9));ctx.stroke();}ctx.restore();
- }
- ctx.restore();
- // Portrait framing keeps the runner readable; preview offscreen actions below the runway.
- if (mode === 'running' && canvas.clientWidth / canvas.clientHeight < .75) {
-  const cue = upcomingAction(game);
-  if (cue) {
-   const unit = width / canvas.clientWidth;
-   const cueY = height * .62 + 48 * unit;
-   const cueWidth = 236 * unit;
-   ctx.save();
-   ctx.fillStyle = GAMEPLAY_COLORS.void; ctx.globalAlpha = .88;
-   ctx.fillRect((width - cueWidth) / 2, cueY - 17 * unit, cueWidth, 36 * unit);
-   ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-   ctx.font = `600 ${12 * unit}px sans-serif`; ctx.fillStyle = GAMEPLAY_COLORS.white;
-   ctx.fillText(`AHEAD · ${cue.label}`, width / 2, cueY - 3 * unit);
-   ctx.fillStyle = GAMEPLAY_COLORS.white; ctx.globalAlpha = .25;
-   ctx.fillRect((width - cueWidth) / 2 + 12 * unit, cueY + 10 * unit, cueWidth - 24 * unit, 2 * unit);
-   ctx.globalAlpha = 1;
-   ctx.fillRect((width - cueWidth) / 2 + 12 * unit, cueY + 10 * unit, (cueWidth - 24 * unit) * (1 - cue.seconds / PREVIEW_SECONDS), 2 * unit);
-   ctx.restore();
-  }
- }
- const level=s.level || 1;const levelProgress=selectedMode === 'challenge' ? challengeProgress(s.distance, c.runnerX, c.finishX) : (s.time % 20)/20*100;
- if (Math.floor(levelProgress) !== renderedProgress) {
-  renderedProgress = Math.floor(levelProgress);
-  $('progressFill').style.width=`${renderedProgress}%`;
- }
- const currentMeters = meters();
- if (currentMeters !== renderedMeters || level !== renderedLevel) {
-  renderedMeters = currentMeters; renderedLevel = level;
-  $('progressText').textContent=selectedMode === 'challenge' ? `${Math.floor(levelProgress)}%` : `${currentMeters}m`;
-  $('progressText').setAttribute('aria-label',selectedMode === 'challenge' ? `Challenge ${Math.floor(levelProgress)} percent complete` : `${currentMeters} meters. Level ${level}`);
-  $('levelText').textContent=selectedMode === 'challenge' ? 'CHALLENGE' : `LEVEL ${String(level).padStart(2,'0')}`;
- }
- if (s.stats.orbs !== renderedOrbs) { renderedOrbs = s.stats.orbs; $('orbCount').textContent = String(renderedOrbs); }
- $('shieldIndicator').hidden = s.powerUps.shieldCharges === 0;
- const phaseName=s.phase===0?'CYAN':'VIOLET';
- $('jumpBtn').hidden = Boolean(game.verticalState) || mode !== 'running';
- phaseButton.classList.toggle('vertical-active', Boolean(game.verticalState));
- phaseHint.textContent = game.verticalState
-  ? (touchControls ? 'CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE' : 'X / SHIFT · CYAN ← · VIOLET → · SWITCH TO THE OPEN SIDE')
-  : (touchControls ? 'SWITCH COLOR TO PASS GATES' : 'X / SHIFT · SWITCH COLOR TO PASS GATES');
- const approachingWall = selectedMode === 'challenge' && !game.verticalComplete && !game.verticalState &&
-  (game.state.distance >= VERTICAL_APPROACH_CUE_X || game.verticalWarp != null);
- sectionCue.hidden = !approachingWall;
- if (approachingWall) {
-  sectionCue.textContent = game.verticalWarp != null && game.verticalWarp < VERTICAL_WARP_SECONDS
-   ? 'GRAVITY TURNS · HOLD STEADY'
-   : 'COLOR WALL AHEAD · GRAVITY TURNS UPWARD';
- }
- if (phaseButton.dataset.phase !== phaseName) {
-  phaseButton.dataset.phase=phaseName;
-  phaseButton.innerHTML=touchControls ? `<span>◈</span> ${phaseName}` : `<span>◈</span> ${phaseName} <kbd>X</kbd>`;
-  phaseButton.style.color=color;
-  phaseButton.setAttribute('aria-label',`Switch phase. ${s.phase===0?'Cyan':'Violet'} is active. Switch to the opposite color to pass gates.${touchControls ? '' : ' Keyboard X or Shift.'}`);
- }
+// ---------------------------------------------------------------- input
+function press() {
+  if (mode === 'title') return;
+  if (mode === 'over' || (mode === 'dying' && performance.now() - diedAt > 200)) { if (runMode === 'practice' && mode === 'dying') return; retry(); return; }
+  if (mode !== 'running' || bot) return;
+  if (game.verticalState) toggleQueued = true;
+  else jumpQueued = true;
 }
-function tick(time){const elapsed=lastTime?Math.min((time-lastTime)/1000,.1):0;lastTime=time;
- if(mode==='running'){accumulator+=elapsed;while(accumulator>=game.config.fixedStep && game.state.status==='running'){const wasVertical=Boolean(game.verticalState);const oldJumps=game.state.stats.jumps;const oldPhase=game.state.phase;const oldOrbs=game.state.stats.orbs;const oldShieldCharges=game.state.powerUps.shieldCharges;const oldShieldsUsed=game.state.powerUps.shieldsUsed;step(game,{jump:wasVertical ? false : jumpQueued || jumpHeld,togglePhase:phaseQueued});runnerTrail.record(game.state.time,game.state.distance+game.state.runner.x+game.state.runner.width/2,game.state.runner.y+game.state.runner.height/2);if(oldPhase!==game.state.phase)playSfx('phase');if(oldOrbs!==game.state.stats.orbs)playSfx('orb');if(game.state.powerUps.shieldsUsed>oldShieldsUsed)playSfx('shield');else if(game.state.powerUps.shieldCharges>oldShieldCharges)playSfx('shieldPickup');if(game.state.stats.jumps>oldJumps)playSfx('jump');if (!wasVertical && game.verticalState) { showVerticalTutorialIfNeeded(); verticalBlendStart = performance.now(); visualEvent = { name: 'phase', at: performance.now() }; haptic([18, 28, 18]); $('status').textContent = 'Color wall section. Switch color to move toward the open side.'; phaseHint.hidden = false; $('jumpBtn').hidden = true; phaseButton.classList.add('vertical-active'); } else if (wasVertical && !game.verticalState) { $('status').textContent = 'Color wall cleared. Horizontal run resumed.'; $('jumpBtn').hidden = false; phaseButton.classList.remove('vertical-active'); }jumpQueued=false;phaseQueued=false;accumulator-=game.config.fixedStep;}if(game.state.status!=='running'){if(activePractice && game.state.status==='dead'){playSfx('death');practiceRespawn();}else finish();}}
- if (mode === 'running' && audioEnabled && !music.paused) syncMusic();
- if (mode === 'running' || renderDirty) { render(time); renderDirty = false; }
- const warp = game.verticalWarp != null ? Math.min(1, game.verticalWarp / VERTICAL_WARP_SECONDS) : 0;
- const blend = verticalBlendStart && game.verticalState ? Math.min(1, (time - verticalBlendStart) / 1100) : 1;
- const tilt = warp > 0 && warp < 1 ? (1 - warp) * 16 : blend < 1 ? (1 - blend) * 12 : 0;
- const scale = 0.9 + 0.1 * Math.max(blend, warp > 0 ? warp : 1);
- canvas.style.transform = tilt && !reducedMotion ? `perspective(860px) rotateX(${tilt}deg) scale(${scale})` : '';
+function heldJump(): boolean { return jumpPointers.size > 0 || keyJump; }
+
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); jumpPointers.add(e.pointerId); press(); });
+ui.overlay.addEventListener('pointerdown', e => {
+  if (mode !== 'over' || (e.target as HTMLElement).closest('#menuBtn')) return;
+  if ((e.target as HTMLElement).closest('#retryBtn')) return;
+  e.preventDefault(); retry();
+});
+ui.jumpBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jumpPointers.add(e.pointerId); press(); });
+ui.phaseBtn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (mode === 'running' && !bot) toggleQueued = true; });
+ui.phaseBtn.addEventListener('click', e => { e.stopPropagation(); if (e.detail === 0 && mode === 'running') toggleQueued = true; });
+window.addEventListener('pointerup', e => { jumpPointers.delete(e.pointerId); });
+window.addEventListener('pointercancel', e => { jumpPointers.delete(e.pointerId); });
+window.addEventListener('keydown', e => {
+  const codes = ['Space', 'ArrowUp', 'KeyW', 'KeyX', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape', 'KeyR', 'Enter'];
+  if (!codes.includes(e.code)) return;
+  if (e.target instanceof HTMLInputElement || (e.target instanceof HTMLButtonElement && (e.code === 'Space' || e.code === 'Enter'))) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (e.code === 'Enter') { if (mode === 'title' || mode === 'over') start(); return; }
+  if (mode === 'title' && ['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyJump = true; start({ keepHeld: true }); return; }
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { keyJump = true; press(); }
+  else if (['KeyX', 'ShiftLeft', 'ShiftRight'].includes(e.code)) { if (mode === 'running' && !bot) toggleQueued = true; else if (mode === 'over') retry(); }
+  else if (e.code === 'KeyR') { if (mode !== 'title') retry(); }
+  else if (mode === 'running' || mode === 'paused') pause();
+});
+window.addEventListener('keyup', e => { if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) keyJump = false; });
+window.addEventListener('blur', () => { jumpPointers.clear(); keyJump = false; if (mode === 'running' && !bot) pause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'running' && !bot) pause(); });
+
+$('playBtn').addEventListener('click', () => start());
+$('retryBtn').addEventListener('click', () => retry());
+$('menuBtn').addEventListener('click', () => showTitle());
+$('resumeBtn').addEventListener('click', () => pause());
+$('restartBtn').addEventListener('click', () => retry());
+$('titleBtn').addEventListener('click', () => showTitle());
+ui.pauseBtn.addEventListener('click', () => pause());
+function toggleSound() {
+  audio.enabled = !audio.enabled;
+  store.set('neon-dash-sound', audio.enabled ? 'on' : 'off');
+  audio.unlock();
+  if (audio.enabled) playMusic(); else audio.music.pause();
+  updateSoundButton();
+}
+ui.soundBtn.addEventListener('click', toggleSound);
+const pauseSound = document.createElement('button');
+pauseSound.className = 'toggle'; pauseSound.id = 'pauseSoundBtn';
+pauseSound.addEventListener('click', toggleSound);
+$('vibrationBtn').before(pauseSound);
+$('vibrationBtn').addEventListener('click', () => {
+  vibration = !vibration;
+  store.set('neon-dash-vibration', vibration ? 'on' : 'off');
+  updateVibrationButton();
+});
+document.querySelectorAll<HTMLInputElement>('input[name=gameMode]').forEach(input => input.addEventListener('change', () => {
+  menuMode = input.value as MenuMode;
+  store.set('neon-dash-mode', menuMode);
+  showTitle();
+}));
+
+// ---------------------------------------------------------------- simulation tick
+function runnerWorldCenter(): [number, number] {
+  const s = game.state;
+  if (game.verticalState) return [game.verticalState.x, game.verticalState.y];
+  return [s.distance + s.runner.x + s.runner.width / 2, s.runner.y + s.runner.height / 2];
+}
+function recordTrail() {
+  const s = game.state;
+  trail.record(s.time, s.distance + s.runner.x + s.runner.width / 2, s.runner.y + s.runner.height / 2);
+  if (game.verticalState) shaftTrail.record(s.time, game.verticalState.x, game.verticalState.y);
+}
+
+function maybeCheckpoint() {
+  if (runMode !== 'practice') return;
+  const s = game.state;
+  if (s.time - lastCheckpointAt < 2.5 || game.verticalWarp !== null) return;
+  if (game.verticalState) {
+    const v = game.verticalState;
+    const gateNear = game.verticalObstacles.some(o => o.y + o.height > v.y - 20 && o.y < v.y + 260);
+    if (gateNear || Math.abs(v.vx) > 30) return;
+  } else {
+    if (!s.runner.grounded) return;
+    const x = s.distance + s.runner.x;
+    const danger = [...s.obstacles, ...s.terrain].some(o => o.x + o.width > x - 30 && o.x < x + s.speed * .9);
+    if (danger) return;
+  }
+  const checkpoint = createCheckpoint(game);
+  if (!checkpoint) return;
+  checkpoints.push(checkpoint);
+  lastCheckpointAt = s.time;
+  if (!game.verticalState) checkpointMarks.push(s.distance + s.runner.x + s.runner.width / 2);
+  const [x, y] = runnerWorldCenter();
+  fx.burst(x, y, 10, C.platform, { speed: 140, life: .5, size: 3, gravity: 0 });
+}
+
+function stepOnce() {
+  const s = game.state;
+  const wasShaft = Boolean(game.verticalState);
+  const wasWarp = game.verticalWarp !== null;
+  const before = {
+    jumps: s.stats.jumps, grounded: s.runner.grounded, orbs: s.stats.orbs, phase: s.phase,
+    charges: s.powerUps.shieldCharges, used: s.powerUps.shieldsUsed, cleared: s.stats.cleared,
+  };
+  const target = wasShaft ? null : nextJump(game);
+  let input: Input;
+  if (bot) input = bot(game);
+  else input = { jump: wasShaft ? false : jumpQueued || heldJump(), togglePhase: toggleQueued };
+  jumpQueued = false; toggleQueued = false;
+  step(game, input);
+  recordTrail();
+  const [cx, cy] = runnerWorldCenter();
+  const color = PHASE_COLORS[s.phase];
+  if (s.stats.jumps > before.jumps) {
+    sfx('jump');
+    squash = 1.22;
+    fx.burst(cx, s.runner.y + s.runner.height, 7, C.white, { speed: 90, angle: Math.PI, spread: 1.6, life: .3, size: 2.5, gravity: -40 });
+    if (target && Math.abs(target.ttc - target.aim) < .045 && s.time - lastPerfectAt > 1.2) {
+      lastPerfectAt = s.time;
+      fx.popup('PERFECT', cx, cy - 40, C.cyan, 18, .7);
+      sfx('perfect');
+    }
+  }
+  if (!before.grounded && s.runner.grounded && !game.verticalState) {
+    squash = .76;
+    sfx('land');
+    fx.burst(cx, s.runner.y + s.runner.height, 8, color, { speed: 120, angle: -Math.PI / 2, spread: Math.PI, life: .32, size: 2.5, gravity: 400 });
+  }
+  if (s.stats.orbs > before.orbs) {
+    sfx('orb'); haptic(10);
+    fx.burst(cx, cy, 14, C.gold, { speed: 200, life: .45, size: 3, gravity: 0 });
+  }
+  if (s.phase !== before.phase) {
+    sfx('phase');
+    fx.burst(cx, cy, 12, color, { speed: 230, life: .3, size: 2.5, gravity: 0 });
+  }
+  if (s.powerUps.shieldsUsed > before.used) {
+    sfx('shieldBreak'); haptic([20, 20, 30]);
+    fx.flashOnce(C.white, .35); fx.shake(.35);
+    fx.burst(cx, cy, 24, C.cyan, { speed: 340, life: .6, size: 4, gravity: 300, shape: 1 });
+    fx.popup('SAVED!', cx, cy - 46, C.cyan, 22);
+  } else if (s.powerUps.shieldCharges > before.charges) {
+    sfx('shield'); haptic(15);
+    fx.burst(cx, cy, 18, C.cyan, { speed: 220, life: .5, size: 3, gravity: 0 });
+    fx.popup('SHIELD', cx, cy - 44, C.cyan, 20);
+  }
+  if (s.stats.cleared > before.cleared && s.status === 'running') {
+    streak += s.stats.cleared - before.cleared;
+    if (streak % 10 === 0) {
+      fx.popup(`${streak} STREAK`, cx + 30, cy - 60, C.gold, 24, 1.1);
+      sfx('streak');
+    }
+  }
+  if (!wasWarp && game.verticalWarp !== null) {
+    warpStartedAt = performance.now();
+    sfx('whoosh'); haptic([15, 30, 15]);
+    setBanner('GRAVITY TURNS!');
+  }
+  if (!wasShaft && game.verticalState) {
+    shaftEnteredAt = performance.now();
+    fx.clear();
+    fx.flashOnce(C.white, .55);
+    shaftTrail.reset();
+    viewportEl.classList.add('shaft');
+    ui.status.textContent = 'Gravity turned. Tap to swap walls.';
+  }
+  if (wasShaft && !game.verticalState && s.status === 'running') {
+    shaftExitedAt = performance.now();
+    fx.clear();
+    fx.flashOnce(C.white, .45);
+    sfx('whoosh');
+    viewportEl.classList.remove('shaft');
+    fx.popup('NICE!', cx + 40, cy - 70, C.platform, 30, 1.2);
+  }
+  if (!reducedMotion && !game.verticalState) {
+    if (!s.runner.grounded) rotation += game.config.fixedStep * Math.PI / .69;
+    else rotation += (Math.round(rotation / (Math.PI / 2)) * Math.PI / 2 - rotation) * .35;
+  }
+  maybeCheckpoint();
+}
+
+/** Presentation slow-mo: the simulation clock and the music slow together. */
+function targetTimeScale(): number {
+  if (mode !== 'running') return 1;
+  if (game.verticalWarp !== null) return .42;
+  if (game.verticalState && performance.now() - shaftEnteredAt < 450) return .55;
+  if (prompt?.slow && !teacher.learned.has(prompt.lesson)) return .5;
+  return 1;
+}
+
+function tick(now: number) {
+  const realDt = lastFrame ? Math.min(.1, (now - lastFrame) / 1000) : 0;
+  lastFrame = now;
+  if (realDt > 0) frameCost = frameCost * .95 + realDt * 1000 * .05;
+  const target = targetTimeScale();
+  timeScale += (target - timeScale) * Math.min(1, realDt * (target < timeScale ? 9 : 4));
+  if (mode === 'running') {
+    accumulator += realDt * timeScale;
+    while (accumulator >= game.config.fixedStep && game.state.status === 'running') {
+      stepOnce();
+      accumulator -= game.config.fixedStep;
+    }
+    if (game.state.status === 'dead') {
+      die();
+    } else if (game.state.status === 'won') win();
+    else {
+      audio.setRate(timeScale);
+      if (audio.enabled && !audio.music.paused && timeScale > .98) syncMusic();
+      updateCues();
+    }
+  } else if (mode === 'dying') {
+    const age = now - diedAt;
+    if (runMode === 'practice' && game.state.status === 'dead' && age > 420) practiceRespawn();
+    else if (age > 380 && runMode !== 'practice') showResult();
+    else if (age > 900) showResult();
+  } else if (mode === 'title' && demo) {
+    advanceDemo(realDt);
+  }
+  fx.update(realDt * (mode === 'dying' ? .6 : Math.max(.5, timeScale)));
+  squash += (1 - squash) * Math.min(1, realDt * 14);
+  render(now);
+  adaptQuality();
+}
+
+function advanceDemo(dt: number) {
+  if (!demo) return;
+  for (let t = 0; t < dt; t += demo.config.fixedStep) {
+    step(demo, courseInput(demo));
+    if (demo.state.status !== 'running') { demo = createGame({ seed: 3, mode: 'endless' }); break; }
+  }
+}
+
+function updateCues() {
+  const s = game.state;
+  prompt = teacher.update(game);
+  if (game.verticalState) {
+    // One line, the first time only: shown until the first gate row is behind the player.
+    const learned = store.get('neon-dash-shaft', '') === 'done';
+    if ((game.verticalCleared > 0 || game.verticalState.phase !== 0) && !learned) store.set('neon-dash-shaft', 'done');
+    const text = learned ? '' : touch ? 'TAP TO SWAP WALLS' : 'SPACE TO SWAP WALLS';
+    setTeach(text, true);
+    setBanner(performance.now() - shaftEnteredAt < 1400 ? 'GRAVITY TURNS!' : '');
+    ui.phaseBtn.classList.toggle('nudge', Boolean(text));
+  } else {
+    setTeach(prompt ? prompt.text : '');
+    ui.phaseBtn.classList.toggle('nudge', prompt?.target === 'phase');
+    const approaching = runMode !== 'endless' && !game.verticalComplete && s.distance >= VERTICAL_APPROACH_CUE_X && s.distance < VERTICAL_SECTION_START_X + 400;
+    if (approaching && !cueShown) { cueShown = true; sfx('cue'); }
+    setBanner(game.verticalWarp !== null ? 'GRAVITY TURNS!' : approaching ? 'GRAVITY TURNS AHEAD ▲' : '');
+  }
+  const pct = percent();
+  if (runMode === 'endless') {
+    ui.progressText.textContent = `${Math.floor(s.distance / 10)}m`;
+    const best = Math.max(1, progress.bestDistance || 0);
+    ui.progressFill.style.width = `${Math.min(100, s.distance / best * 100)}%`;
+  } else {
+    ui.progressText.textContent = `${pct}%`;
+    ui.progressFill.style.width = `${pct}%`;
+  }
+  document.documentElement.style.setProperty('--phase', PHASE_COLORS[s.phase]);
+}
+
+// ---------------------------------------------------------------- render
+const bloomA = document.createElement('canvas');
+const bloomB = document.createElement('canvas');
+function applyBloom() {
+  const aw = Math.max(1, Math.round(canvas.width / 6)), ah = Math.max(1, Math.round(canvas.height / 6));
+  if (bloomA.width !== aw || bloomA.height !== ah) { bloomA.width = aw; bloomA.height = ah; bloomB.width = Math.max(1, aw >> 1); bloomB.height = Math.max(1, ah >> 1); }
+  const a = bloomA.getContext('2d')!, b = bloomB.getContext('2d')!;
+  a.globalCompositeOperation = 'copy'; a.drawImage(canvas, 0, 0, aw, ah);
+  // Squaring twice keeps only the bright light, then a further downsample spreads it.
+  a.globalCompositeOperation = 'multiply'; a.drawImage(bloomA, 0, 0); a.drawImage(bloomA, 0, 0);
+  b.globalCompositeOperation = 'copy'; b.drawImage(bloomA, 0, 0, bloomB.width, bloomB.height);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = .55; ctx.drawImage(bloomB, 0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = .35; ctx.drawImage(bloomA, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function adaptQuality() {
+  if (frameCost > 26 && bloom) { bloom = false; fx.density = .6; }
+}
+
+function beatInfo() {
+  const t = beatClock.sample(game.state.time, audio.enabled && !audio.music.paused ? audio.music.currentTime : undefined);
+  const g = mode === 'title' && demo ? demo : game;
+  const time = mode === 'title' && demo ? g.state.time : t;
+  return { env: reducedMotion ? 0 : beatEnvelope(time), phase: ((time / BEAT_SECONDS) % 1 + 1) % 1 };
+}
+
+function horizontalFrame(g: Game) {
+  const { width: w, height: h } = view;
+  const world = viewportWorldSize(w, h);
+  const scale = world.scale;
+  const cameraX = world.width * runnerScreenShare(w, h) - g.config.runnerX;
+  const runwayY = h * runwayScreenShare(w, h);
+  const offsetY = runwayY / scale - g.config.groundY;
+  const horizonY = Math.min(runwayY - 60, h * (isPortrait(w, h) ? .4 : .43));
+  return { scale, cameraX, runwayY, offsetY, horizonY, world };
+}
+
+function drawHorizontal(g: Game, now: number, beat: { env: number; phase: number }, hideRunner: boolean) {
+  const { width: w, height: h, dpr } = view;
+  const f = horizontalFrame(g);
+  const s = g.state;
+  const section = Math.floor(s.distance / 5600);
+  const into = s.distance % 5600;
+  const blend = Math.max(0, Math.min(1, (into - 4800) / 800));
+  drawBackdrop(ctx, {
+    width: w, height: h, dpr, horizonY: f.horizonY, runwayY: f.runwayY,
+    originX: (f.cameraX - s.distance) * f.scale, scale: f.scale,
+    time: now / 1000, beat: beat.env, beatPhase: beat.phase,
+    palette: skyPaletteFor(section), next: skyPaletteFor(section + 1), blend, reducedMotion,
+  });
+  const base = ctx.getTransform();
+  ctx.save();
+  ctx.transform(f.scale, 0, 0, f.scale, f.cameraX * f.scale, f.offsetY * f.scale);
+  drawWorld(ctx, g, {
+    width: f.world.width, height: f.world.height, cameraX: f.cameraX,
+    glowUnit: g.config.runnerWidth * .9, time: now / 1000, beat: beat.env, beatPhase: beat.phase, reducedMotion,
+    heat: Math.min(1, streak / 30), attempt, showAttempt: g === game && mode !== 'title', checkpoints: g === game ? checkpointMarks : [],
+    squash: g === game ? squash : 1, rotation: g === game ? rotation : 0, hideRunner, challenge: runMode !== 'endless' && g === game,
+  }, g === game ? trail : demoTrail(g), glow);
+  if (g === game) {
+    ctx.translate(-s.distance, 0);
+    fx.drawParticles(ctx);
+    fx.drawPopups(ctx);
+  }
+  ctx.restore();
+  ctx.setTransform(base);
+  return f;
+}
+
+const demoTrailBuffer = new RunnerTrail();
+function demoTrail(g: Game) {
+  const s = g.state;
+  demoTrailBuffer.record(s.time, s.distance + s.runner.x + s.runner.width / 2, s.runner.y + s.runner.height / 2);
+  return demoTrailBuffer;
+}
+
+function drawShaftView(now: number, beat: { env: number; phase: number }, state = game.verticalState!, hideRunner = false) {
+  const { width: w, height: h } = view;
+  drawShaft(ctx, {
+    state, obstacles: game.verticalObstacles, orbs: game.verticalOrbs, shattered: game.verticalShattered,
+    shield: game.state.powerUps.shieldCharges > 0,
+  }, {
+    width: w, height: h, time: now / 1000, beat: beat.env, beatPhase: beat.phase, reducedMotion,
+    glowUnit: 22, heat: Math.min(1, streak / 30), hideRunner,
+  }, shaftTrail, glow);
+  const t = shaftTransform(w, h, state.y);
+  ctx.save();
+  ctx.translate(t.offsetX, t.offsetY);
+  ctx.scale(t.scale, t.scale);
+  fx.drawParticles(ctx);
+  fx.drawPopups(ctx);
+  ctx.restore();
+}
+
+const ease = (t: number) => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+/** Rotate the horizontal scene a quarter turn around the runner, landing it
+ * where the shaft runner sits, so the runway becomes the left wall. */
+function drawRotated(now: number, beat: { env: number; phase: number }, p: number, entering: boolean) {
+  const { width: w, height: h } = view;
+  const e = ease(Math.max(0, Math.min(1, p)));
+  const f = horizontalFrame(game);
+  const s = game.state;
+  const rx = (s.runner.x + s.runner.width / 2 + f.cameraX) * f.scale;
+  const ry = (s.runner.y + s.runner.height / 2 + f.offsetY) * f.scale;
+  const shaft = shaftTransform(w, h, 0);
+  const tx = shaft.x + VERTICAL_WALL_INSET * shaft.scale, ty = h * shaft.runnerShare;
+  const preview = entering
+    ? createVerticalSection({ width: VERTICAL_WIDTH, height: 900, startX: VERTICAL_WALL_INSET })
+    : lastShaft;
+  if (preview) {
+    ctx.save();
+    drawShaftView(now, beat, { ...preview, phase: s.phase }, true);
+    ctx.restore();
+  }
+  const amount = entering ? e : 1 - e;
+  ctx.save();
+  ctx.globalAlpha = entering ? 1 - Math.max(0, (p - .55) / .45) : Math.min(1, p / .35);
+  ctx.translate(rx + (tx - rx) * amount, ry + (ty - ry) * amount);
+  ctx.rotate(amount * Math.PI / 2);
+  const zoom = 1 + (shaft.scale / f.scale - 1) * amount;
+  ctx.scale(zoom, zoom);
+  ctx.translate(-rx, -ry);
+  drawHorizontal(game, now, beat, false);
+  ctx.restore();
+}
+
+function render(now: number) {
+  const { width: w, height: h, dpr } = view;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  const [shx, shy] = fx.offset(now / 1000, reducedMotion);
+  ctx.translate(shx, shy);
+  const beat = beatInfo();
+  if (mode === 'title' && demo) drawHorizontal(demo, now, beat, false);
+  else if (game.verticalWarp !== null && !game.verticalState) {
+    const p = game.verticalWarp / VERTICAL_WARP_SECONDS;
+    drawRotated(now, beat, p, true);
+  } else if (game.verticalState) {
+    const settle = Math.min(1, (now - shaftEnteredAt) / 380);
+    ctx.save();
+    if (!reducedMotion && settle < 1) {
+      const z = 1 + (1 - ease(settle)) * .08;
+      ctx.translate(w / 2, h / 2); ctx.scale(z, z); ctx.translate(-w / 2, -h / 2);
+    }
+    drawShaftView(now, beat, game.verticalState, mode === 'dying' || mode === 'over');
+    ctx.restore();
+  } else if (shaftExitedAt && now - shaftExitedAt < 650 && !reducedMotion && lastShaftSnapshot) {
+    lastShaft = lastShaftSnapshot;
+    drawRotated(now, beat, (now - shaftExitedAt) / 650, false);
+  } else {
+    drawHorizontal(game, now, beat, mode === 'dying' || mode === 'over');
+  }
+  if (bloom) applyBloom();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fx.drawFlash(ctx, w, h);
+  if (game.verticalWarp !== null && !reducedMotion) {
+    const p = game.verticalWarp / VERTICAL_WARP_SECONDS;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = .5 * Math.sin(p * Math.PI);
+    ctx.strokeStyle = C.white; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 28; i++) {
+      const a = i * 2.39996, r0 = Math.min(w, h) * (.25 + ((i * 37) % 11) / 30 + p * .3), r1 = r0 + 40 + p * 120;
+      ctx.moveTo(w / 2 + Math.cos(a) * r0, h / 2 + Math.sin(a) * r0);
+      ctx.lineTo(w / 2 + Math.cos(a) * r1, h / 2 + Math.sin(a) * r1);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------- harness
+type PlayOptions = { seed?: number; mode?: MenuMode; bot?: 'good' | 'sloppy' | 'very-sloppy' | 'none'; botSeed?: number; skipTo?: number | 'cue' | 'warp' | 'vertical' | 'exit'; after?: number };
+function harnessPlay(options: PlayOptions = {}) {
+  menuMode = options.mode ?? 'challenge';
+  refreshTitle();
+  if (options.seed) forcedSeed = options.seed;
+  start();
+  botName = options.bot ?? 'good';
+  bot = botName === 'none' ? null : botFor(botName as any, options.botSeed ?? 1);
+  const skip = options.skipTo;
+  if (skip !== undefined) {
+    const until = (g: Game) => skip === 'cue' ? g.state.distance >= VERTICAL_APPROACH_CUE_X - 200
+      : skip === 'warp' ? g.verticalWarp !== null
+      : skip === 'vertical' ? Boolean(g.verticalState)
+      : skip === 'exit' ? g.verticalComplete
+      : g.state.time >= skip;
+    // Fast-forwards always arrive alive; the requested bot (or the player) takes over afterwards.
+    const driver = bot ?? botFor('good', 1);
+    for (let i = 0; i < 120 * 200 && game.state.status === 'running' && !until(game); i++) step(game, driver(game));
+    if (options.after) {
+      const end = game.state.time + options.after;
+      while (game.state.time < end && game.state.status === 'running') step(game, driver(game));
+    }
+    if (game.verticalState) { shaftEnteredAt = performance.now() - (options.after ?? 0) * 1000; viewportEl.classList.add('shaft'); }
+    trail.reset(); shaftTrail.reset(); recordTrail();
+    teacher.update(game);
+    syncMusic(true);
+  }
+  return harnessState();
+}
+function harnessState() {
+  const s = game.state;
+  return {
+    mode, status: s.status, time: s.time, distance: s.distance, percent: percent(), attempt,
+    vertical: Boolean(game.verticalState), warp: game.verticalWarp, verticalComplete: game.verticalComplete,
+    phase: s.phase, jumps: s.stats.jumps, orbs: s.stats.orbs, cleared: s.stats.cleared, streak, timeScale,
+    teach: shownTeach, banner: shownBanner, bloom, frameCost,
+  };
+}
+(window as any).__harness = {
+  play: harnessPlay,
+  state: harnessState,
+  setBot(kind: PlayOptions['bot'], botSeed = 1) { bot = kind === 'none' || !kind ? null : botFor(kind, botSeed); },
+  title: showTitle,
+};
+
+if (import.meta.env.DEV) {
+  (window as any).__layoutTestState = (state: 'dead' | 'won') => {
+    game.state.status = state;
+    if (state === 'dead') { die(); showResult(); } else { win(); showResult(); }
+  };
+  (window as any).__setShieldCharged = (charged = true) => {
+    game.state.powerUps = charged ? collectShield(game.state.powerUps) : { ...game.state.powerUps, shieldCharges: 0 };
+  };
+  (window as any).__touchTestState = () => ({ phase: game.state.phase, jumps: game.state.stats.jumps, runnerY: game.state.runner.y, jumpHeld: heldJump() });
+  (window as any).__enterVerticalTest = (courseSeed = 1) => {
+    game.verticalObstacles = createVerticalSectionCourse(courseSeed);
+    game.verticalOrbs = createVerticalSectionOrbs(game.verticalObstacles);
+    game.verticalLength = verticalSectionLength(game.verticalObstacles);
+    game.verticalComplete = false;
+    enterVertical(game);
+    shaftEnteredAt = performance.now() - 6000;
+    viewportEl.classList.add('shaft');
+  };
+  (window as any).__verticalTestState = () => ({
+    active: Boolean(game.verticalState), complete: game.verticalComplete, phase: game.verticalState?.phase ?? game.state.phase,
+    x: game.verticalState?.x ?? null, y: game.verticalState?.y ?? null,
+    firstSafePhase: game.verticalObstacles.length ? (game.verticalObstacles[0].x === 0 ? 1 : 0) : 0,
+  });
+}
+
+// ---------------------------------------------------------------- boot
+updateSoundButton();
+updateVibrationButton();
+showTitle();
+const autoplay = params.get('autoplay');
+if (autoplay) {
+  const skip = params.get('skip');
+  harnessPlay({
+    bot: autoplay as any, seed: Number(params.get('seed')) || LEVEL_SEED, botSeed: Number(params.get('botSeed')) || 1,
+    mode: (params.get('mode') as MenuMode) || 'challenge',
+    skipTo: skip === null ? undefined : (isNaN(Number(skip)) ? skip as any : Number(skip)), after: Number(params.get('after')) || 0,
+  });
 }
 
 class RunScene extends Phaser.Scene {
- constructor() { super('run'); }
- update(time: number) {
-  const rect = canvas.getBoundingClientRect();
-  // A hidden or collapsed canvas has no usable coordinate system. Keep the
-  // previous frame until it becomes visible again.
-  if (rect.width <= 0 || rect.height <= 0) { lastTime = 0; return; }
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const worldSize = viewportWorldSize(rect.width, rect.height);
-  const scale = worldSize.scale;
-  const nextWidth = worldSize.width;
-  const nextHeight = worldSize.height;
-  if (viewportMetrics.width !== nextWidth || viewportMetrics.height !== nextHeight) renderDirty = true;
-  viewportMetrics = { width: nextWidth, height: nextHeight, dpr };
-  const width = Math.max(1, Math.round(rect.width * dpr));
-  const height = Math.max(1, Math.round(rect.height * dpr));
-  if (this.scale.width !== width || this.scale.height !== height) {
-   this.scale.resize(width, height);
-   renderDirty = true;
+  constructor() { super('run'); }
+  update(time: number) {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) { lastFrame = 0; return; }
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    view = { width: rect.width, height: rect.height, dpr };
+    const width = Math.max(1, Math.round(rect.width * dpr));
+    const height = Math.max(1, Math.round(rect.height * dpr));
+    if (this.scale.width !== width || this.scale.height !== height) this.scale.resize(width, height);
+    if (game.verticalState) lastShaftSnapshot = game.verticalState;
+    tick(time);
   }
-  tick(time);
- }
 }
 
 new Phaser.Game({
- // Draw directly to the visible canvas and retain static frames when paused.
- // This avoids copying a full-resolution offscreen canvas every frame.
- type: Phaser.CANVAS,
- canvas,
- width: canvas.clientWidth || 680,
- height: canvas.clientHeight || 480,
- transparent: true,
- clearBeforeRender: false,
- scale: { mode: Phaser.Scale.NONE },
- scene: RunScene,
- audio: { noAudio: true },
+  type: Phaser.CANVAS,
+  canvas,
+  width: canvas.clientWidth || 680,
+  height: canvas.clientHeight || 480,
+  transparent: true,
+  clearBeforeRender: false,
+  scale: { mode: Phaser.Scale.NONE },
+  scene: RunScene,
+  audio: { noAudio: true },
 });

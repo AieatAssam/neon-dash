@@ -600,6 +600,8 @@ export function step(game: Game, input: Input = {}): GameState {
   if (s.status === 'running' && c.mode === 'challenge' && !game.verticalComplete) {
     if (game.verticalWarp === null && s.distance >= VERTICAL_SECTION_START_X && s.runner.grounded && hasHorizontalRunway(game)) {
       game.verticalWarp = 0;
+      // The runway becomes the cyan wall, so the runner always enters the shaft cyan.
+      s.phase = 0;
     } else if (game.verticalWarp !== null) {
       game.verticalWarp += dt;
       if (game.verticalWarp >= VERTICAL_WARP_SECONDS) enterVertical(game);
