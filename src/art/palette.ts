@@ -15,12 +15,6 @@ export const GAMEPLAY_COLORS = {
   void: '#030713',
 } as const;
 
-export const ART_PALETTES = [
-  { name: 'midnight', top: '#100728', horizon: '#173855', floor: '#120b30', pink: '#ff3ca6', blue: '#347cff', ...GAMEPLAY_COLORS },
-  { name: 'orchid', top: '#150827', horizon: '#462252', floor: '#180b2d', pink: '#ff5a79', blue: '#9161ff', ...GAMEPLAY_COLORS },
-  { name: 'lagoon', top: '#061a2c', horizon: '#124458', floor: '#071b31', pink: '#fa55e7', blue: '#24b8ff', ...GAMEPLAY_COLORS },
-] as const;
-
 /** Synthwave sky sets. Bright tones stay on the horizon and sun, behind the
  * dark floor that carries gameplay, so hazards never sit on a bright field. */
 export interface SkyPalette {
@@ -40,7 +34,7 @@ export const SKY_PALETTES: readonly SkyPalette[] = Object.freeze([
     sunTop: '#fff27a', sunMid: '#ffa53d', sunBottom: '#ff3d6e', sunGlow: '#ff7a3d',
     star: '#ffe3f1', accent: '#ffb347', window: '#ff8fd6', mountain: '#2e0b3a', city: '#110420',
     floorTop: '#1a0527', floorBottom: '#040611', grid: '#ff4fa3', gridHot: '#ffe0ef' },
-  { name: 'lagoon', skyTop: '#010a1c', skyMid: '#06244a', skyLow: '#0d4a72', horizon: '#2ee6ff',
+  { name: 'lagoon', skyTop: '#010a1c', skyMid: '#06244a', skyLow: '#0c4469', horizon: '#2ee6ff',
     sunTop: '#f4ff9a', sunMid: '#5effc8', sunBottom: '#2b9cff', sunGlow: '#2ee6ff',
     star: '#d8fbff', accent: '#37ffe7', window: '#ff7ae0', mountain: '#082a48', city: '#020c1d',
     floorTop: '#04142d', floorBottom: '#020611', grid: '#37b8ff', gridHot: '#d0f6ff' },
