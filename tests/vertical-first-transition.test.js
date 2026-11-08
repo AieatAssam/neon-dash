@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, step, VERTICAL_WARP_SECONDS, VERTICAL_FIRST_LETHAL_Y, VERTICAL_SAFE_RUNWAY_Y } from '../core.ts';
+import { createGame, step, VERTICAL_SECTION_START_X, VERTICAL_WARP_SECONDS, VERTICAL_FIRST_LETHAL_Y, VERTICAL_SAFE_RUNWAY_Y } from '../core.ts';
 import { courseInput } from './course-solver.js';
 
 function enterVertical(game) {
@@ -8,7 +8,7 @@ function enterVertical(game) {
   game.state.obstacles = [];
   game.state.terrain = [];
   game.state.runner.grounded = true;
-  game.state.distance = 5000;
+  game.state.distance = VERTICAL_SECTION_START_X;
   const warpSteps = Math.ceil(VERTICAL_WARP_SECONDS / game.config.fixedStep) + 6;
   for (let i = 0; i < warpSteps; i++) step(game);
   assert.ok(game.verticalState, 'should finish warp into vertical play');
@@ -29,15 +29,12 @@ test('first lethal gate is far enough for a safe vertical runway', () => {
   assert.equal(game.verticalGraceUntilY, VERTICAL_SAFE_RUNWAY_Y);
 });
 
-test('naive players usually survive the opening color wall', () => {
-  let deaths = 0;
-  const trials = 80;
-  for (let seed = 0; seed < trials; seed++) {
+test('a player who does nothing still gets five calm seconds in the shaft', () => {
+  for (let seed = 0; seed < 80; seed++) {
     const game = createGame({ mode: 'challenge', seed });
     enterVertical(game);
-    if (surviveVertical(game, 3.5, () => ({ jump: false, togglePhase: false })) === 'dead') deaths++;
+    assert.equal(surviveVertical(game, 4.9, () => ({})), 'running', `seed ${seed}`);
   }
-  assert.ok(deaths / trials <= 0.22, `naive death rate ${deaths}/${trials} should stay low with runway + grace`);
 });
 
 test('teaching bot survives the first vertical segment across seeds', () => {
