@@ -1,8 +1,8 @@
 import { step as stepGame, type Game, type Input, type Obstacle, type Terrain } from '../core';
 import { verticalForwardSpeed, VERTICAL_PLAYER_RADIUS, VERTICAL_WIDTH } from '../vertical-section';
 
-/** Jumps fire when the next hazard is this many seconds away. The center of
- * the spike window at the default speeds is about 0.23 s. */
+/** Jumps fire when the next hazard is this many seconds away. A lone spike
+ * at 240 units/s can be cleared from about 0.10 s to 0.57 s out. */
 const IDEAL_LEAD = .19;
 const PLATFORM_EXIT = 40;
 

@@ -14,9 +14,10 @@ const clips = {
   'opening-20s': { title: 1.5, play: { seed: 7, bot: 'good' }, seconds: 20, gif: true },
   // Warning banner, portal, rotate warp with slow-mo, one-line tutorial, first gates.
   'vertical-transition': { play: { seed: 7, bot: 'good', skipTo: 'cue' }, seconds: 13, gif: true },
-  // The whole shaft and the warp back out.
+  // Twenty-odd seconds of shaft play.
   'vertical-20s': { play: { seed: 7, bot: 'good', skipTo: 'vertical' }, seconds: 22 },
-  // A sloppy player (late, jittery, stray taps): dies once, retries, and gets through the shaft.
+  'vertical-transition-landscape': { play: { seed: 7, bot: 'good', skipTo: 'cue' }, seconds: 13, size: 'landscape' },
+  // A sloppy player (late, jittery, stray taps): dies once, retries, and reaches the shaft.
   'sloppy-bot': { play: { seed: 7, bot: 'sloppy', botSeed: 49, retry: true }, seconds: 50 },
 };
 
